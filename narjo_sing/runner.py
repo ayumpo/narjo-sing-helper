@@ -11,10 +11,21 @@ from pathlib import Path
 
 import numpy as np
 
-from .audio import read_wav, write_float_wav
+from .audio import read_wav, stderr_tail, write_float_wav
 
 # The child gets the source 6 dB down so no engine stage clips or renormalizes it.
 HEADROOM = 0.5
+
+
+def clean_work_dir(work_dir: Path) -> None:
+    """Removes per-job run folders left behind by a crash; call once at startup, before the worker runs."""
+    if not work_dir.exists():
+        return
+    for entry in work_dir.iterdir():
+        if entry.is_dir():
+            shutil.rmtree(entry, ignore_errors=True)
+        else:
+            entry.unlink(missing_ok=True)
 
 
 class SubprocessRun:
@@ -56,13 +67,20 @@ class SubprocessRunner:
         self.child_cmd = child_cmd or [sys.executable, "-m", "narjo_sing.separate_cli"]
 
     def device(self, timeout: float = 300) -> str:
-        out = subprocess.run(self.child_cmd + ["device"], capture_output=True, text=True, timeout=timeout, check=True)
+        try:
+            out = subprocess.run(self.child_cmd + ["device"], capture_output=True, text=True, timeout=timeout,
+                                 check=True)
+        except subprocess.CalledProcessError as exc:
+            raise RuntimeError(f"Could not detect the device: {stderr_tail(exc)}") from exc
         return out.stdout.strip().splitlines()[-1]
 
     def prepare(self, model_key: str, timeout: float) -> float:
         started = time.monotonic()
-        subprocess.run(self.child_cmd + ["prepare", "--model", model_key, "--models-dir", str(self.models_dir)],
-                       check=True, timeout=timeout, capture_output=True)
+        try:
+            subprocess.run(self.child_cmd + ["prepare", "--model", model_key, "--models-dir", str(self.models_dir)],
+                           check=True, timeout=timeout, capture_output=True)
+        except subprocess.CalledProcessError as exc:
+            raise RuntimeError(f"Could not prepare {model_key}: {stderr_tail(exc)}") from exc
         return time.monotonic() - started
 
     def build_command(self, model_key: str, input_wav: Path, output_wav: Path, background: bool) -> list[str]:

@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from narjo_sing.audio import SAMPLE_RATE
-from narjo_sing.runner import SubprocessRunner
+from narjo_sing.runner import SubprocessRunner, clean_work_dir
 from narjo_sing.separation import CATALOG, model_spec
 
 STUB_CHILD = """
@@ -77,6 +77,36 @@ def test_cancel_stops_the_child(runner, monkeypatch):
 def test_device_and_prepare(runner):
     assert runner.device() == "cpu: stub"
     assert runner.prepare("htdemucs", timeout=30) >= 0.0
+
+
+@pytest.fixture
+def failing_runner(tmp_path):
+    stub = tmp_path / "failing_stub.py"
+    stub.write_text("import sys\nprint('boom from child', file=sys.stderr)\nsys.exit(1)\n")
+    return SubprocessRunner(tmp_path / "models", tmp_path / "work", child_cmd=[sys.executable, str(stub)])
+
+
+def test_device_failure_message_includes_stderr_tail(failing_runner):
+    with pytest.raises(RuntimeError, match="boom from child"):
+        failing_runner.device()
+
+
+def test_prepare_failure_message_includes_stderr_tail(failing_runner):
+    with pytest.raises(RuntimeError, match="boom from child"):
+        failing_runner.prepare("htdemucs", timeout=30)
+
+
+def test_clean_work_dir_removes_leftover_run_directories(tmp_path):
+    work = tmp_path / ".work"
+    (work / "crashed-run").mkdir(parents=True)
+    (work / "crashed-run" / "input.wav").write_bytes(b"x")
+    (work / "stray.log").write_text("x")
+    clean_work_dir(work)
+    assert list(work.iterdir()) == []
+
+
+def test_clean_work_dir_tolerates_a_missing_directory(tmp_path):
+    clean_work_dir(tmp_path / "never-created")
 
 
 @pytest.mark.slow

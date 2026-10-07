@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import math
 import os
 import sqlite3
 import threading
@@ -11,6 +13,10 @@ from pathlib import Path
 import mutagen
 
 from .normalize import norm, norm_int
+
+log = logging.getLogger(__name__)
+
+MAX_TAG_NUMBER = 9999
 
 AUDIO_EXTENSIONS = {
     ".flac", ".mp3", ".m4a", ".aac", ".alac", ".ogg", ".oga", ".opus",
@@ -45,6 +51,11 @@ class IndexedFile:
     duration: float
 
 
+def _clamped_tag_number(value: int | None) -> int | None:
+    """A disc/track tag outside 0..9999 (e.g. a corrupt 20-digit value) can't fit SQLite INTEGER."""
+    return value if value is not None and 0 <= value <= MAX_TAG_NUMBER else None
+
+
 def read_tags(path: Path) -> dict:
     audio = mutagen.File(path, easy=True)
     if audio is None:
@@ -64,8 +75,8 @@ def read_tags(path: Path) -> dict:
         "album_artist": norm(first("albumartist") or first("artist")),
         "album": norm(first("album")),
         "title": norm(first("title") or path.stem),
-        "disc": norm_int(first("discnumber")),
-        "track": norm_int(first("tracknumber")),
+        "disc": _clamped_tag_number(norm_int(first("discnumber"))),
+        "track": _clamped_tag_number(norm_int(first("tracknumber"))),
         "duration": float(getattr(audio.info, "length", 0.0) or 0.0),
     }
 
@@ -82,8 +93,8 @@ class LibraryIndex:
         with self._lock:
             self._db.executescript(SCHEMA)
 
-    def _walk(self):
-        for root, dirs, files in os.walk(self.music_dir):
+    def _walk(self, onerror=None):
+        for root, dirs, files in os.walk(self.music_dir, onerror=onerror):
             dirs[:] = [d for d in dirs if d not in SKIP_DIRS and not d.startswith(".")]
             for name in files:
                 if name.startswith(".") or Path(name).suffix.lower() not in AUDIO_EXTENSIONS:
@@ -95,32 +106,43 @@ class LibraryIndex:
             known = {r[0]: (r[1], r[2]) for r in self._db.execute("SELECT rel_path, size, mtime_ns FROM files")}
         seen: set[str] = set()
         added = updated = pending = 0
-        for path in self._walk():
-            rel = path.relative_to(self.music_dir).as_posix()
+
+        def on_walk_error(exc: OSError) -> None:
+            log.warning("Library scan: cannot read a directory: %s", exc)
+
+        for path in self._walk(onerror=on_walk_error):
             try:
+                rel = path.relative_to(self.music_dir).as_posix()
                 st = path.stat()
-            except OSError:
-                continue
-            seen.add(rel)
-            if known.get(rel) == (st.st_size, st.st_mtime_ns):
-                continue
-            try:
-                tags = read_tags(path)
+                seen.add(rel)
+                if known.get(rel) == (st.st_size, st.st_mtime_ns):
+                    continue
+                try:
+                    tags = read_tags(path)
+                except Exception:
+                    tags = {"title": norm(path.stem), "duration": 0.0}
+                duration = tags.get("duration", 0.0)
+                if not math.isfinite(duration) or duration < 0:
+                    log.warning("Skipping %r: non-finite or negative duration", str(path))
+                    continue
+                row = (rel, rel.casefold()[::-1], st.st_size, st.st_mtime_ns,
+                       tags.get("album_artist", ""), tags.get("album", ""), tags.get("title", ""),
+                       tags.get("disc"), tags.get("track"), duration)
+                with self._lock:
+                    self._db.execute("INSERT OR REPLACE INTO files VALUES (?,?,?,?,?,?,?,?,?,?)", row)
+                    pending += 1
+                    if pending >= COMMIT_EVERY:
+                        self._db.commit()
+                        pending = 0
+                if rel in known:
+                    updated += 1
+                else:
+                    added += 1
             except Exception:
-                tags = {"title": norm(path.stem), "duration": 0.0}
-            row = (rel, rel.casefold()[::-1], st.st_size, st.st_mtime_ns,
-                   tags.get("album_artist", ""), tags.get("album", ""), tags.get("title", ""),
-                   tags.get("disc"), tags.get("track"), tags.get("duration", 0.0))
-            with self._lock:
-                self._db.execute("INSERT OR REPLACE INTO files VALUES (?,?,?,?,?,?,?,?,?,?)", row)
-                pending += 1
-                if pending >= COMMIT_EVERY:
-                    self._db.commit()
-                    pending = 0
-            if rel in known:
-                updated += 1
-            else:
-                added += 1
+                log.warning("Skipping %r after an indexing error", str(path), exc_info=True)
+        if not seen and known:
+            log.error("Music folder looks empty or unmounted; keeping %d indexed files", len(known))
+            return {"added": 0, "updated": 0, "removed": 0, "total": len(known)}
         removed = [rel for rel in known if rel not in seen]
         with self._lock:
             self._db.executemany("DELETE FROM files WHERE rel_path = ?", [(r,) for r in removed])

@@ -32,11 +32,11 @@ def decide(fast_model: str, best_model: str, fast_rt: float, best_rt: float | No
     return TierPlan("fast-only", fast_model, None, False, slow_fast)
 
 
-def within_hours(window: str | None, now: clock_time) -> bool:
-    if not window:
+def within_hours(window: tuple[clock_time, clock_time] | None, now: clock_time) -> bool:
+    """`window` is pre-validated by Settings.from_env, so this never raises."""
+    if window is None:
         return True
-    start_text, end_text = window.split("-")
-    start, end = clock_time.fromisoformat(start_text.strip()), clock_time.fromisoformat(end_text.strip())
+    start, end = window
     if start <= end:
         return start <= now < end
     return now >= start or now < end

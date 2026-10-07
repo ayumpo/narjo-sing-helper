@@ -1,6 +1,7 @@
 import json
 from datetime import time as clock_time
 
+import pytest
 from conftest import FakeRunner
 
 from narjo_sing.benchmark import BENCH_SECONDS, load_or_run, time_model
@@ -34,10 +35,10 @@ def test_owner_can_force_the_upgrade_on_or_off():
 
 def test_within_hours():
     assert within_hours(None, clock_time(12, 0))
-    assert within_hours("01:00-07:00", clock_time(3, 0))
-    assert not within_hours("01:00-07:00", clock_time(8, 0))
-    assert within_hours("22:00-06:00", clock_time(23, 30))
-    assert not within_hours("22:00-06:00", clock_time(12, 0))
+    assert within_hours((clock_time(1, 0), clock_time(7, 0)), clock_time(3, 0))
+    assert not within_hours((clock_time(1, 0), clock_time(7, 0)), clock_time(8, 0))
+    assert within_hours((clock_time(22, 0), clock_time(6, 0)), clock_time(23, 30))
+    assert not within_hours((clock_time(22, 0), clock_time(6, 0)), clock_time(12, 0))
 
 
 def test_expected_seconds_uses_timings_and_falls_back():
@@ -66,6 +67,27 @@ def test_time_model_gives_up_past_the_cap():
     timing = time_model(runner, "bs_roformer", background=True, max_rt=1.0, sleep=sleep, clock=clock)
     assert timing.rt is None
     assert runner.started[0][2].cancelled
+
+
+def test_best_tier_failure_falls_back_to_fast_only_after_retries(tmp_path):
+    settings = Settings.from_env({"SING_STEMS_DIR": str(tmp_path)})
+    runner = FakeRunner(fail_prepare_models={"bs_roformer"})
+    sleeps = []
+    result = load_or_run(tmp_path / "benchmark.json", runner, settings, "0.1.0", sleep=sleeps.append)
+    assert result["best"]["rt"] is None
+    assert sleeps == [30.0, 120.0]
+    plan = decide(settings.fast_model, settings.best_model, result["fast"]["rt"], result["best"]["rt"],
+                  settings.best_upgrade)
+    assert plan.mode == "fast-only"
+
+
+def test_fast_tier_failure_is_fatal_after_retries(tmp_path):
+    settings = Settings.from_env({"SING_STEMS_DIR": str(tmp_path)})
+    runner = FakeRunner(fail_prepare_models={"htdemucs"})
+    sleeps = []
+    with pytest.raises(RuntimeError, match="htdemucs"):
+        load_or_run(tmp_path / "benchmark.json", runner, settings, "0.1.0", sleep=sleeps.append)
+    assert sleeps == [30.0, 120.0]
 
 
 def test_results_are_cached_per_version_and_models(tmp_path):

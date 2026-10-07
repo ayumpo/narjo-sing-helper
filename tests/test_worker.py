@@ -82,6 +82,21 @@ def test_best_hours_hold_background_work(setup):
     assert allowed.step() is True
 
 
+def test_song_longer_than_max_minutes_fails_without_decoding(setup, monkeypatch):
+    store, file, key, _, worker = setup
+    job = store.submit(key, file.rel_path, file.duration, "now", "htdemucs", False)
+
+    def must_not_decode(*args, **kwargs):
+        raise AssertionError("must not decode a song over SING_MAX_MINUTES")
+
+    monkeypatch.setattr("narjo_sing.worker.decode", must_not_decode)
+    held = worker(FakeRunner(), SING_MAX_MINUTES="0.01")
+    assert held.step() is True
+    failed = store.get(job.id)
+    assert failed.state == "failed"
+    assert "SING_MAX_MINUTES" in failed.error
+
+
 def test_no_plan_means_no_work_yet(setup):
     store, file, key, _, worker = setup
     store.submit(key, file.rel_path, file.duration, "now", "htdemucs", False)
@@ -100,6 +115,39 @@ def test_save_failure_marks_the_job_failed(setup, monkeypatch):
     assert store.get(job.id).state == "failed"
     assert "disk full" in store.get(job.id).error
     assert not store.upgrade_pending(key)
+
+
+def test_runner_start_failure_fails_the_job_and_returns_normally(setup):
+    store, file, key, _, worker = setup
+    job = store.submit(key, file.rel_path, file.duration, "now", "htdemucs", False)
+    runner = FakeRunner(fail_start="gpu OOM")
+    assert worker(runner).step() is True
+    assert store.get(job.id).state == "failed"
+    assert "gpu OOM" in store.get(job.id).error
+
+
+def test_poll_failure_cancels_the_run_and_fails_the_job(setup):
+    store, file, key, _, worker = setup
+    job = store.submit(key, file.rel_path, file.duration, "now", "htdemucs", False)
+    runner = FakeRunner(polls_needed=50, poll_fail_after=2)
+    assert worker(runner).step() is True
+    assert runner.started[0][2].cancelled is True
+    assert store.get(job.id).state == "failed"
+
+
+def test_save_failure_still_runs_eviction(setup, monkeypatch):
+    store, file, key, _, worker = setup
+    job = store.submit(key, file.rel_path, file.duration, "now", "htdemucs", False)
+    called = []
+
+    def fail_write(*args, **kwargs):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr("narjo_sing.worker.write_stem_pair", fail_write)
+    monkeypatch.setattr("narjo_sing.worker.evict", lambda *a, **k: called.append(True))
+    assert worker(FakeRunner()).step() is True
+    assert store.get(job.id).state == "failed"
+    assert called == [True]
 
 
 def test_eviction_failure_does_not_fail_the_job(setup, stems, monkeypatch):

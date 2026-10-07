@@ -59,13 +59,19 @@ def write_stem_pair(stems_dir: Path, key: str, source: np.ndarray, vocals: np.nd
     song_dir = stems_dir / key
     version_dir = song_dir / etag
     version_dir.mkdir(parents=True)
-    encode_aac(vocals * scale, version_dir / "vocals.m4a")
-    encode_aac(instrumental * scale, version_dir / "instrumental.m4a")
-    meta = StemMeta(key, etag, quality, model, rel_path, frames / SAMPLE_RATE, time.time())
-    previous = read_meta(stems_dir, key)
-    staged = song_dir / f"meta.json.{etag}.tmp"
-    staged.write_text(json.dumps(asdict(meta)))
-    os.replace(staged, song_dir / "meta.json")
+    try:
+        encode_aac(vocals * scale, version_dir / "vocals.m4a")
+        encode_aac(instrumental * scale, version_dir / "instrumental.m4a")
+        meta = StemMeta(key, etag, quality, model, rel_path, frames / SAMPLE_RATE, time.time())
+        previous = read_meta(stems_dir, key)
+        staged = song_dir / f"meta.json.{etag}.tmp"
+        staged.write_text(json.dumps(asdict(meta)))
+        os.replace(staged, song_dir / "meta.json")
+    except Exception:
+        # evict() only treats a <key> folder as cache content once its meta.json exists, so a
+        # half-written etag folder with no meta.json would sit here as an orphan forever.
+        shutil.rmtree(version_dir, ignore_errors=True)
+        raise
     if previous is not None and previous.etag != etag:
         shutil.rmtree(song_dir / previous.etag, ignore_errors=True)
     return meta

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -12,9 +13,12 @@ from .config import Settings
 from .status import ModelTiming
 from .tiers import UPGRADE_MAX_RT
 
+log = logging.getLogger(__name__)
+
 BENCH_SECONDS = 9.0
 DOWNLOAD_TIMEOUT = 3600.0
 LOAD_TIMEOUT = 600.0
+RETRY_DELAYS = (30.0, 120.0)  # 3 attempts total: try, wait 30s, try, wait 120s, try
 
 
 def synthetic_clip(seconds: float = BENCH_SECONDS) -> np.ndarray:
@@ -41,17 +45,38 @@ def time_model(runner, model_key: str, background: bool, max_rt: float | None = 
     return ModelTiming(model_key, max(0.01, (clock() - started - load) / BENCH_SECONDS), load)
 
 
-def load_or_run(path: Path, runner, settings: Settings, version: str, force: bool = False) -> dict:
+def _with_retries(fn, sleep=time.sleep):
+    for attempt, delay in enumerate((0.0,) + RETRY_DELAYS):
+        if delay:
+            sleep(delay)
+        try:
+            return fn()
+        except Exception as exc:
+            last_exc = exc
+            log.warning("Benchmark attempt %d/%d failed: %s", attempt + 1, len(RETRY_DELAYS) + 1, exc)
+    raise last_exc
+
+
+def load_or_run(path: Path, runner, settings: Settings, version: str, force: bool = False,
+                sleep=time.sleep) -> dict:
     if path.exists() and not force:
         cached = json.loads(path.read_text())
         if (cached.get("version"), cached.get("fast", {}).get("model"), cached.get("best", {}).get("model")) == (
                 version, settings.fast_model, settings.best_model):
             return cached
+    device = _with_retries(runner.device, sleep=sleep)
+    fast = _with_retries(lambda: time_model(runner, settings.fast_model, background=False), sleep=sleep)
+    try:
+        best = _with_retries(
+            lambda: time_model(runner, settings.best_model, background=True, max_rt=UPGRADE_MAX_RT), sleep=sleep)
+    except Exception as exc:
+        log.warning("Best-tier benchmark failed after retries; continuing fast-only: %s", exc)
+        best = ModelTiming(settings.best_model, None, 0.0)
     result = {
         "version": version,
-        "device": runner.device(),
-        "fast": asdict(time_model(runner, settings.fast_model, background=False)),
-        "best": asdict(time_model(runner, settings.best_model, background=True, max_rt=UPGRADE_MAX_RT)),
+        "device": device,
+        "fast": asdict(fast),
+        "best": asdict(best),
     }
     path.write_text(json.dumps(result, indent=2))
     return result

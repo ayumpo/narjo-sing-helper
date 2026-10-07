@@ -99,3 +99,28 @@ def test_validation(env):
     client, _, _ = env
     assert client.post("/v1/jobs", json={**SONG, "priority": "whenever"}).status_code == 422
     assert client.get("/v1/jobs/unknown").status_code == 404
+
+
+def test_docs_endpoints_are_disabled(env):
+    client, _, _ = env
+    bare = TestClient(client.app)
+    assert bare.get("/docs").status_code == 404
+    assert bare.get("/redoc").status_code == 404
+    assert bare.get("/openapi.json").status_code == 404
+
+
+def test_non_ascii_key_is_rejected_not_a_500(env):
+    client, _, _ = env
+    # httpx's own `headers=` dict forces ascii; a raw byte value skips that so the server, not
+    # httpx, is what's under test here (a client can send arbitrary UTF-8 header bytes over the wire).
+    resp = TestClient(client.app).get("/v1/health", headers={"X-Narjo-Sing-Key": "café-ñ".encode()})
+    assert resp.status_code == 401
+
+
+def test_submission_is_refused_while_status_error_is_set(env):
+    client, worker, _ = env
+    worker.status.error = "Benchmark failed: htdemucs prepare blew up"
+    job_resp = client.post("/v1/jobs", json={**SONG, "priority": "now"})
+    assert job_resp.status_code == 503 and worker.status.error in job_resp.json()["detail"]
+    batch_resp = client.post("/v1/jobs/batch", json={"songs": [SONG]})
+    assert batch_resp.status_code == 503 and worker.status.error in batch_resp.json()["detail"]

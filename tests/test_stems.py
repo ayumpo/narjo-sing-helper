@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 from conftest import make_flac
 
-from narjo_sing.audio import SAMPLE_RATE, decode, read_wav, write_float_wav
+from narjo_sing.audio import SAMPLE_RATE, decode, encode_aac, read_wav, write_float_wav
 from narjo_sing.stems import read_meta, song_key, stem_path, write_stem_pair
 
 
@@ -20,6 +20,16 @@ def test_decode_gives_stereo_44k_float(music):
     audio = decode(make_flac(music / "a.flac", seconds=2))
     assert audio.shape[0] == 2 and audio.dtype == np.float32
     assert abs(audio.shape[1] - 2 * SAMPLE_RATE) < 100
+
+
+def test_decode_failure_message_includes_stderr_tail(tmp_path):
+    with pytest.raises(RuntimeError, match="No such file or directory"):
+        decode(tmp_path / "missing.flac")
+
+
+def test_encode_failure_message_includes_stderr_tail(tmp_path):
+    with pytest.raises(RuntimeError):
+        encode_aac(sine(0.1, 0.2), tmp_path / "no-such-dir" / "out.m4a")
 
 
 def test_float_wav_round_trip(tmp_path):
@@ -58,6 +68,19 @@ def test_headroom_keeps_stems_below_full_scale(stems):
     source = sine(1, 0.9)
     meta = write_stem_pair(stems, "h", source, -source * 0.5, rel_path="x", model="m", quality="fast")
     assert np.abs(decode(stem_path(stems, meta, "instrumental"))).max() < 1.05
+
+
+def test_encode_failure_leaves_no_orphan_folder(stems, monkeypatch):
+    source = sine(1, 0.5)
+
+    def fail_encode(*args, **kwargs):
+        raise OSError("No space left on device")
+
+    monkeypatch.setattr("narjo_sing.stems.encode_aac", fail_encode)
+    with pytest.raises(OSError):
+        write_stem_pair(stems, "k", source, source * 0.5, rel_path="x", model="m", quality="fast")
+    song_dir = stems / "k"
+    assert not song_dir.exists() or list(song_dir.iterdir()) == []
 
 
 def test_unknown_stem_name_is_rejected(stems):

@@ -10,6 +10,8 @@ services:
       # Use the same path your music server uses for the library.
       SING_MUSIC_DIR: /volume1/data/Media/music
       # SING_BEST_HOURS: "01:00-07:00"
+      # SING_BEST_HOURS uses the container's local time; set TZ to match your own, e.g.:
+      # TZ: America/New_York
     volumes:
       - /volume1/data/Media/music:/volume1/data/Media/music:ro
       - ./models:/models

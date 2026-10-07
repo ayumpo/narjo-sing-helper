@@ -22,8 +22,11 @@ def load_or_create_key(stems_dir: Path) -> str:
 
 
 def require_key(expected: str):
+    expected_bytes = expected.encode("utf-8")
+
     def dependency(x_narjo_sing_key: str | None = Header(default=None)) -> None:
-        if x_narjo_sing_key is None or not secrets.compare_digest(x_narjo_sing_key, expected):
+        # Bytes, not str: compare_digest rejects non-ASCII str (a non-ASCII header is a 401, not a 500).
+        if x_narjo_sing_key is None or not secrets.compare_digest(x_narjo_sing_key.encode("utf-8"), expected_bytes):
             raise HTTPException(status_code=401, detail="Missing or wrong X-Narjo-Sing-Key")
 
     return dependency

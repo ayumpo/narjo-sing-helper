@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
 
 import uvicorn
 
@@ -13,7 +14,7 @@ from .benchmark import load_or_run
 from .config import Settings
 from .jobs import JobStore
 from .library.index import LibraryIndex
-from .runner import SubprocessRunner
+from .runner import SubprocessRunner, clean_work_dir
 from .separation import model_spec
 from .status import HelperStatus, ModelTiming
 from .tiers import decide
@@ -27,6 +28,7 @@ def build(settings: Settings, runner) -> tuple[AppContext, Worker]:
     model_spec(settings.best_model)
     for directory in (settings.models_dir, settings.stems_dir):
         directory.mkdir(parents=True, exist_ok=True)
+    clean_work_dir(settings.stems_dir / ".work")
     key = load_or_create_key(settings.stems_dir)
     index = LibraryIndex(settings.stems_dir / "index.sqlite", settings.music_dir)
     store = JobStore(settings.stems_dir / "jobs.sqlite")
@@ -52,10 +54,11 @@ def scan_loop(index: LibraryIndex, minutes: int, stop: threading.Event) -> None:
         stop.wait(minutes * 60)
 
 
-def worker_loop(ctx: AppContext, worker: Worker, runner, force_bench: bool, stop: threading.Event) -> None:
+def worker_loop(ctx: AppContext, worker: Worker, runner, force_bench: bool, stop: threading.Event,
+                sleep=time.sleep) -> None:
     try:
         bench = load_or_run(ctx.settings.stems_dir / "benchmark.json", runner, ctx.settings, ctx.version,
-                            force=force_bench)
+                            force=force_bench, sleep=sleep)
         apply_benchmark(ctx, bench)
         log.info("Device %s; plan %s", ctx.status.device, ctx.status.plan)
     except Exception as exc:

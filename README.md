@@ -81,7 +81,8 @@ All variables are read once, at startup.
 | `SING_FAST_MODEL` | `htdemucs` | Model used for `now`/`next` jobs. One of `htdemucs`, `kim_vocal_2`, `bs_roformer`. |
 | `SING_BEST_MODEL` | `bs_roformer` | Model used for `batch` jobs and background upgrades. Same choices as above. |
 | `SING_BEST_UPGRADE` | `auto` | `auto` decides the tier mode from the benchmark; `on` forces two-tier background upgrades even if the benchmark alone would not enable them; `off` disables them. |
-| `SING_BEST_HOURS` | unset | Optional `HH:MM-HH:MM` window (e.g. `01:00-07:00`) restricting when best-tier background work is allowed to run. Unset means any time. |
+| `SING_BEST_HOURS` | unset | Optional `HH:MM-HH:MM` window (e.g. `01:00-07:00`) restricting when best-tier background work is allowed to run. `H:MM` and an en dash separator are also accepted; the two endpoints must differ. Unset means any time. The window uses the **container's local time**, so set `TZ` (e.g. `TZ: America/New_York`) in `docker-compose.yml` if you rely on this. |
+| `SING_MAX_MINUTES` | `20` | Songs longer than this (by the indexed duration) are rejected immediately, without decoding. Must be > 0. |
 | `SING_REBENCHMARK` | unset | Set to `1` to re-measure hardware speed on the next start instead of using the cached result. The benchmark cache is keyed by helper version plus the two configured models, so re-run this after a hardware change. |
 
 The container's own `SING_MUSIC_DIR`, `SING_MODELS_DIR` and `SING_STEMS_DIR` defaults

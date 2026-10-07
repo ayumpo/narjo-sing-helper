@@ -47,7 +47,7 @@ class AppContext:
 
 
 def create_app(ctx: AppContext) -> FastAPI:
-    app = FastAPI(title="Narjo Sing helper", version=ctx.version)
+    app = FastAPI(title="Narjo Sing helper", version=ctx.version, docs_url=None, redoc_url=None, openapi_url=None)
     auth = [Depends(require_key(ctx.key))]
 
     def seconds_per_minute(model: str | None) -> float | None:
@@ -104,12 +104,18 @@ def create_app(ctx: AppContext) -> FastAPI:
             "libraryFiles": ctx.index.count(),
         }
 
+    def refuse_if_broken() -> None:
+        if ctx.status.error:
+            raise HTTPException(status_code=503, detail=ctx.status.error)
+
     @app.post("/v1/jobs", dependencies=auth)
     def create_job(request: JobRequest) -> dict:
+        refuse_if_broken()
         return submit(request, request.priority)
 
     @app.post("/v1/jobs/batch", dependencies=auth)
     def create_batch(request: BatchRequest) -> list[dict]:
+        refuse_if_broken()
         return [submit(song, "batch") for song in request.songs]
 
     @app.get("/v1/jobs/{job_id}", dependencies=auth)
