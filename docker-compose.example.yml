@@ -1,0 +1,16 @@
+services:
+  narjo-sing-helper:
+    build: .
+    image: narjo-sing-helper:latest
+    container_name: narjo-sing-helper
+    restart: unless-stopped
+    ports:
+      - "8765:8765"
+    environment:
+      # Use the same path your music server uses for the library.
+      SING_MUSIC_DIR: /volume1/data/Media/music
+      # SING_BEST_HOURS: "01:00-07:00"
+    volumes:
+      - /volume1/data/Media/music:/volume1/data/Media/music:ro
+      - ./models:/models
+      - ./stems:/stems
