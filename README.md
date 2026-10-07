@@ -18,7 +18,7 @@ There is no published registry image yet: you build the image locally from a clo
 repository with `docker compose up -d --build`.
 
 ```bash
-git clone https://github.com/narjo-app/narjo-sing-helper.git
+git clone https://github.com/ayumpo/narjo-sing-helper.git
 cd narjo-sing-helper
 cp docker-compose.example.yml docker-compose.yml
 # edit docker-compose.yml: set SING_MUSIC_DIR and the matching volume mount
