@@ -75,15 +75,28 @@ class JobStore:
                 if rank < PRIORITY[existing.priority]:
                     self._db.execute("UPDATE jobs SET priority = ?, background = ?, updated = ? WHERE id = ?",
                                      (rank, int(background), now, existing.id))
+                    existing_id = existing.id
+                    self._demote_other_now_jobs(rank, existing_id, now)
                     self._db.commit()
-                    existing = self._one("id = ?", (existing.id,))
+                    existing = self._one("id = ?", (existing_id,))
+                elif rank == PRIORITY["now"]:
+                    self._demote_other_now_jobs(rank, existing.id, now)
+                    self._db.commit()
                 return existing
             job_id = uuid.uuid4().hex
             self._db.execute(f"INSERT INTO jobs ({COLUMNS}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                              (job_id, key, rel_path, duration, rank, model, int(background), "queued", 0.0, None,
                               None, now, now))
+            self._demote_other_now_jobs(rank, job_id, now)
             self._db.commit()
             return self._one("id = ?", (job_id,))
+
+    def _demote_other_now_jobs(self, rank: int, job_id: str, now: float) -> None:
+        # "now" is the song the listener is on: a newer one makes the older queued ones look-ahead work.
+        if rank != PRIORITY["now"]:
+            return
+        self._db.execute("UPDATE jobs SET priority = ?, updated = ? WHERE state = 'queued' AND priority = ? AND id != ?",
+                         (PRIORITY["next"], now, PRIORITY["now"], job_id))
 
     def record_done(self, key: str, rel_path: str, duration: float, priority: str, model: str) -> Job:
         now = self._clock()

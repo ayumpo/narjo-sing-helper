@@ -66,3 +66,24 @@ def test_upgrade_pending_usage_and_active_keys(store):
     assert set(store.usage()) == {"k"}
     done = store.record_done("d", "z", 5, "now", "htdemucs")
     assert done.state == "done" and store.queue_length() == 1
+
+
+def test_the_newest_now_request_runs_first(store):
+    first = store.submit("a", "a", 1, "now", "htdemucs", False)
+    store.submit("n", "n", 1, "next", "htdemucs", False)
+    store.submit("b", "b", 1, "now", "htdemucs", False)
+    assert store.get(first.id).priority == "next"
+    order = []
+    while (job := store.next_runnable(allow_background=True)) is not None:
+        order.append(job.key)
+        store.mark_running(job.id)
+        store.finish(job.id)
+    assert order == ["b", "a", "n"]
+
+
+def test_asking_again_for_an_earlier_song_makes_it_current(store):
+    store.submit("a", "a", 1, "now", "htdemucs", False)
+    store.submit("b", "b", 1, "now", "htdemucs", False)
+    again = store.submit("a", "a", 1, "now", "htdemucs", False)
+    assert again.priority == "now"
+    assert store.next_runnable(allow_background=True).key == "a"
