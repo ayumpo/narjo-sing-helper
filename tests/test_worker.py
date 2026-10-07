@@ -86,3 +86,30 @@ def test_no_plan_means_no_work_yet(setup):
     store, file, key, _, worker = setup
     store.submit(key, file.rel_path, file.duration, "now", "htdemucs", False)
     assert worker(FakeRunner(), plan=None).step() is False
+
+
+def test_save_failure_marks_the_job_failed(setup, monkeypatch):
+    store, file, key, _, worker = setup
+    job = store.submit(key, file.rel_path, file.duration, "now", "htdemucs", False)
+
+    def fail_write(*args, **kwargs):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr("narjo_sing.worker.write_stem_pair", fail_write)
+    assert worker(FakeRunner()).step() is True
+    assert store.get(job.id).state == "failed"
+    assert "disk full" in store.get(job.id).error
+    assert not store.upgrade_pending(key)
+
+
+def test_eviction_failure_does_not_fail_the_job(setup, stems, monkeypatch):
+    store, file, key, _, worker = setup
+    job = store.submit(key, file.rel_path, file.duration, "now", "htdemucs", False)
+
+    def fail_evict(*args, **kwargs):
+        raise OSError("busy")
+
+    monkeypatch.setattr("narjo_sing.worker.evict", fail_evict)
+    assert worker(FakeRunner()).step() is True
+    assert store.get(job.id).state == "done"
+    assert read_meta(stems, key) is not None

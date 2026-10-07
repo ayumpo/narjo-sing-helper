@@ -64,14 +64,22 @@ class Worker:
             self.store.fail(job.id, str(exc)[:500])
             return True
         quality = "best" if job.model == plan.best_model else "fast"
-        write_stem_pair(self.settings.stems_dir, job.key, source, vocals, rel_path=job.rel_path, model=job.model,
-                        quality=quality)
+        try:
+            write_stem_pair(self.settings.stems_dir, job.key, source, vocals, rel_path=job.rel_path, model=job.model,
+                            quality=quality)
+        except Exception as exc:
+            self.store.fail(job.id, f"Could not save the stems: {exc}"[:500])
+            log.exception("Failed to save stems for %s", job.rel_path)
+            return True
         self.store.finish(job.id)
         self.store.touch(job.key)
         if plan.upgrade and quality == "fast":
             self.store.submit(job.key, job.rel_path, job.duration, "upgrade", plan.best_model, background=True)
-        evict(self.settings.stems_dir, int(self.settings.stem_cache_gb * 1e9), self.store.usage(),
-              self.store.active_keys())
+        try:
+            evict(self.settings.stems_dir, int(self.settings.stem_cache_gb * 1e9), self.store.usage(),
+                  self.store.active_keys())
+        except Exception:
+            log.exception("Stem cache eviction failed")
         log.info("Separated %s with %s (%s)", job.rel_path, job.model, quality)
         return True
 
