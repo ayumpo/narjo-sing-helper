@@ -80,10 +80,6 @@ class Worker:
                 log.exception("Failed to save stems for %s (job %s)", job.rel_path, job.id)
                 self._evict()
                 return True
-            self.store.finish(job.id)
-            self.store.touch(job.key)
-            if plan.upgrade and quality == "fast":
-                self.store.submit(job.key, job.rel_path, job.duration, "upgrade", plan.best_model, background=True)
         except Exception as exc:
             if run is not None:
                 try:
@@ -93,6 +89,14 @@ class Worker:
             self.store.fail(job.id, f"Unexpected worker error: {exc}"[:500])
             log.exception("Worker step failed for %s (job %s)", job.rel_path, job.id)
             return True
+        self.store.finish(job.id)
+        # The stems are published and the job is done; a failure below must not turn it into "failed".
+        try:
+            self.store.touch(job.key)
+            if plan.upgrade and quality == "fast":
+                self.store.submit(job.key, job.rel_path, job.duration, "upgrade", plan.best_model, background=True)
+        except Exception:
+            log.exception("Bookkeeping after %s failed (job %s)", job.rel_path, job.id)
         self._evict()
         log.info("Separated %s with %s (%s)", job.rel_path, job.model, quality)
         return True

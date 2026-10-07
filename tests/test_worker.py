@@ -161,3 +161,16 @@ def test_eviction_failure_does_not_fail_the_job(setup, stems, monkeypatch):
     assert worker(FakeRunner()).step() is True
     assert store.get(job.id).state == "done"
     assert read_meta(stems, key) is not None
+
+
+def test_bookkeeping_failure_after_finish_keeps_the_job_done(setup, stems, monkeypatch):
+    store, file, key, _, worker = setup
+    job = store.submit(key, file.rel_path, file.duration, "now", "htdemucs", False)
+
+    def fail_touch(*args, **kwargs):
+        raise RuntimeError("database or disk is full")
+
+    monkeypatch.setattr(store, "touch", fail_touch)
+    assert worker(FakeRunner()).step() is True
+    assert store.get(job.id).state == "done"
+    assert read_meta(stems, key) is not None
