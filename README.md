@@ -1,78 +1,133 @@
-# narjo-sing-helper
+# Narjo Sing helper
 
-Self-hosted vocal separation for Narjo's Sing feature.
+Sing lets Narjo turn the singer's voice down, or off, so you can sing along — like Apple
+Music Sing, but for your own music library.
 
-## What it does
+This helper does the heavy lifting. It runs on your own server, next to Navidrome, Plex, Jellyfin or Emby,
+and separates each song into "vocals" and "music". Your music never leaves your home network.
 
-`narjo-sing-helper` runs next to your music server, indexes the same music library, and
-separates songs into a vocal stem and an instrumental stem on request. It exposes a small
-HTTP API that the Narjo app calls to submit songs, poll job status and download the finished
-stems. No audio or metadata leaves your server: separation happens on your own hardware, using
-model weights your server downloads itself on first use. It is a Python/FastAPI service,
-packaged as a Docker image, aimed at the same kind of self-hosters who already run Navidrome,
-Jellyfin, Emby or Plex.
+## What you need
+
+- A computer that is always on and can see your music folder, with **Docker**: a Synology NAS, a home
+  server (Proxmox, Unraid, Ubuntu…) or a Mac or Windows PC with Docker Desktop.
+- About **10 GB of free space** (the helper itself, its voice-separation models, and prepared songs).
+- Narjo on your iPhone or iPad, on the same home network (or connected through a VPN such as Tailscale).
+
+## How fast is it?
+
+It depends entirely on the computer it runs on:
+
+| Your server | A new song is ready in about… |
+|---|---|
+| Modern mini PC or desktop (for example Intel Core i5-12500T) | **2–3 minutes**. Narjo prepares the next songs in your queue while you listen. |
+| Low-power NAS (for example Synology DS920+, Intel Celeron J4125) | **30 minutes to an hour**. Fine for preparing songs ahead of time, too slow to tap the mic and sing right away. |
+
+Once a song is prepared, it starts in Sing within a second, every time.
 
 ## Install
 
-There is no published registry image yet: you build the image locally from a clone of this
-repository with `docker compose up -d --build`.
+It takes about 15 minutes of your time, plus a while for your server to set itself up the first time.
+
+### 1. Download
+
+At the top of this page, click the green **Code** button → **Download ZIP**, and unzip it. You get a folder
+called `narjo-sing-helper-main`. Rename it to **`narjo-sing-helper`**.
+
+### 2. Tell it where your music is
+
+Open the file **`docker-compose.yml`** in that folder with TextEdit (Mac) or Notepad (Windows), and find this
+line:
+
+```yaml
+      - /volume1/music:/music:ro
+```
+
+`/volume1/music` is where a Synology NAS keeps music by default. If your music is somewhere else, replace
+**only** `/volume1/music` with your music folder, and save. Leave `:/music:ro` as it is.
+
+> **Where is my music folder?** Use the folder your music server (Navidrome, Plex, Jellyfin or Emby) reads.
+> On Synology: File Station → right-click your music folder → **Properties** → **Location**.
+> On Unraid it is usually `/mnt/user/music`.
+
+### 3. Start it
+
+**Synology (Container Manager)**
+
+1. Open **File Station**, go into the **`docker`** shared folder, and drag your `narjo-sing-helper` folder
+   into it.
+2. Open **Container Manager** → **Project** → **Create**.
+   - **Project name:** `narjo-sing`
+   - **Path:** `docker/narjo-sing-helper`
+   - When it finds the `docker-compose.yml` file, choose to **use the existing** one.
+3. Click **Next**, then **Done**. The first start builds the helper on your NAS: it downloads about 3 GB and
+   can take 20–40 minutes. You can close the window; it keeps going.
+
+**Unraid, Ubuntu, or any computer with Docker**
+
+Copy the `narjo-sing-helper` folder to your server, open a terminal in it, and run:
 
 ```bash
-git clone https://github.com/ayumpo/narjo-sing-helper.git
-cd narjo-sing-helper
-cp docker-compose.example.yml docker-compose.yml
-# edit docker-compose.yml: set SING_MUSIC_DIR and the matching volume mount
 docker compose up -d --build
 ```
 
-Mount your music library read-only, at the same path your music server uses, so paths reported
-by Jellyfin, Emby, Plex or Navidrome resolve directly without translation. For example, if your
-music server sees the library at `/volume1/data/Media/music`, mount it at that same path in this
-container too.
+(On older systems the command is `docker-compose up -d --build`.)
 
-### Synology (Container Manager)
+**Proxmox (Debian container)**
 
-The image is built from this repository's files, so the project folder must contain them.
-
-1. On GitHub, **Code → Download ZIP**, and unzip it into a folder on the NAS, e.g.
-   `docker/narjo-sing-helper` (File Station), so that folder holds `Dockerfile` and
-   `docker-compose.example.yml`.
-2. Copy `docker-compose.example.yml` to `docker-compose.yml` in that folder and set both the
-   volume mount and `SING_MUSIC_DIR` to your library, e.g. `/volume1/data/Media/music`.
-3. Container Manager → **Project** → **Create** → set **Path** to that folder → it picks up
-   `docker-compose.yml` → **Build** → start the project. The first build downloads about 2–3 GB.
-4. Open the container's **Log** for the `Access key` line (also saved in `stems/access-key.txt`).
-
-### Proxmox (LXC with Docker)
-
-Run the helper inside an unprivileged LXC container with Docker installed:
-
-1. Create the LXC with nesting enabled, e.g. in its config:
+1. Select the container → **Options** → **Features** → tick **keyctl** and **Nesting** → restart it.
+2. Give it your music folder, read-only. In the **Proxmox host's** Shell (replace `106` with your
+   container's number, and `/mnt/music` with your music folder):
+   ```bash
+   pct set 106 -mp0 /mnt/music,mp=/music,ro=1
    ```
-   features: nesting=1,keyctl=1
+3. In the **container's** Console:
+   ```bash
+   apt update && apt install -y git docker.io docker-compose
+   git clone https://github.com/ayumpo/narjo-sing-helper.git && cd narjo-sing-helper
+   sed -i 's#/volume1/music:/music#/music:/music#' docker-compose.yml
+   docker-compose up -d --build
    ```
-2. Bind-mount the host's music folder into the container, read-only, at the same path your
-   music server uses.
-3. Install Docker inside the container, clone this repo, and run
-   `docker compose up -d --build` as above.
 
-A full VM with Docker works the same way and needs no special LXC features.
+## Connect Narjo
 
-### Unraid
+1. **Get the access key.** It is saved in the `stems` folder next to your compose file, in a file called
+   `access-key.txt` (on Synology: File Station → `docker/narjo-sing/stems/access-key.txt`). It is also printed
+   in the container's log on a line starting with `Access key`.
+2. In Narjo, open **Settings → Integrations → Sing** and enter:
+   - **Helper address:** `http://YOUR-SERVER-IP:8765` (for example `http://192.168.1.20:8765`)
+   - **Access key:** the key from step 1
+3. Tap **Test Connection**.
+4. Play a song, open the **lyrics**, and tap the **microphone** above the "…" button.
 
-There is no Community Applications template yet. Either:
+## Check that it's working
 
-- install the **Docker Compose Manager** plugin and point it at a clone of this repo and your
-  edited `docker-compose.yml`, or
-- `docker compose up -d --build` from the Unraid CLI, in a clone of this repo.
+Open `http://YOUR-SERVER-IP:8765` in a web browser. It confirms the helper is running. Paste your access key
+there to see what it is doing: the songs it is preparing right now, their progress, and the songs that are
+ready.
 
-### Apple silicon Macs
+## Troubleshooting
 
-Docker Desktop on macOS cannot access the GPU, so the Docker image falls back to CPU, which is
-far slower than native (see the speed table below). A native macOS install using the GPU is
-planned but not part of this release.
+- **Test Connection fails.** Check that your phone is on the same network as the server, that the address
+  starts with `http://` and ends with `:8765`, and that a firewall isn't blocking port 8765 (Synology:
+  Control Panel → Security → Firewall).
+- **"Song not found".** The helper can't see that song's file. Make sure the music line in the compose file
+  points at the same music folder your music server uses.
+- **The mic keeps spinning.** The helper is still preparing the song. Open the status page above to see its
+  progress; on slower servers this takes a while.
+- **Updating.** Download the new ZIP and replace the files in your `narjo-sing-helper` folder, but keep
+  its `models` and `stems` folders (they hold your prepared songs and access key). Then build again:
+  Container Manager → **Project** → `narjo-sing` → **Action** → **Build**; or `docker compose up -d --build`.
 
-## Configuration
+## For technical users
+
+### How it works
+
+On first start the helper indexes the mounted library, generates an access key, and benchmarks two models
+on your hardware: a fast one (HTDemucs) that answers the mic right away, and a best one (BS-RoFormer) that
+re-separates songs in the background, at low priority, when it is fast enough to be worthwhile. Narjo asks
+for the current song and the next two; finished stems are cached on both the server and the phone.
+
+### Settings
 
 All variables are read once, at startup.
 
@@ -91,34 +146,11 @@ All variables are read once, at startup.
 | `SING_MAX_MINUTES` | `20` | Songs longer than this (by the indexed duration) are rejected immediately, without decoding. Must be > 0. |
 | `SING_REBENCHMARK` | unset | Set to `1` to re-measure hardware speed on the next start instead of using the cached result. The benchmark cache is keyed by helper version plus the two configured models, so re-run this after a hardware change. |
 
-The container's own `SING_MUSIC_DIR`, `SING_MODELS_DIR` and `SING_STEMS_DIR` defaults
-(`/music`, `/models`, `/stems`) match the volumes declared in the Dockerfile; you normally only
-need to change `SING_MUSIC_DIR` to match your mount, plus optionally `SING_FAST_MODEL`,
-`SING_BEST_MODEL`, `SING_BEST_UPGRADE` and `SING_BEST_HOURS`.
+Mount your library at `/music` (as `docker-compose.yml` does) and you need none of these.
+Songs are matched by the end of their file path, so the folder may sit at a different path here
+than on your music server.
 
-## Connecting Narjo
-
-On first start, the helper generates an access key and prints it to the container log on a line
-like:
-
-```
-Access key (also saved in /stems/access-key.txt): <key>
-```
-
-The same key is saved to `/stems/access-key.txt` inside the `/stems` volume. Copy it, then in
-Narjo go to **Settings → Integrations → Sing**, enter the helper's URL and the access key, and
-use "Test connection" to confirm it works. Sing requires Narjo Pro.
-
-## Status page
-
-Open `http://<host>:8765/` in a browser to check on the helper directly. Without the access key
-it just confirms the helper is running and shows how to connect. Paste the key in to see live
-status: benchmark state, device, mode, model throughput, the current queue (running and queued
-jobs, with progress and ETA), and the last 50 songs that have stems prepared. The page polls
-every 5 seconds while visible; tick "Remember on this browser" to keep the key in that browser's
-local storage.
-
-## Hardware and speed
+### Models and speed in detail
 
 Measured speed, in seconds to separate 60 seconds of audio, using `audio-separator` defaults:
 
@@ -146,7 +178,7 @@ best models on your hardware and picks one of three modes:
 `GET /v1/health` reports the active mode plus measured throughput, so you can see which tier
 your hardware landed in.
 
-## Model licenses
+### Model licenses
 
 Model weights are not shipped with this project or baked into the Docker image. Your own server
 downloads them on first use from the public UVR model repository.
@@ -155,7 +187,11 @@ downloads them on first use from the public UVR model repository.
 - The **BS-RoFormer (viperx)** weights carry no published license. They are used here only on
   your own hardware, for your own library, and are never redistributed by this project.
 
-## API
+### Docker on a Mac
+
+Docker Desktop on macOS can't use the Mac's GPU, so the helper runs on the CPU there.
+
+### API
 
 The helper listens on port 8765. Every `/v1/...` route except `GET /v1/ping` requires the header
 `X-Narjo-Sing-Key` with the access key described above. `GET /` (the status page above) also

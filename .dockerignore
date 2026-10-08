@@ -1,0 +1,11 @@
+.git
+.github
+.venv
+.pytest_cache
+*.egg-info
+__pycache__
+docs
+models
+stems
+tests
+.superpowers

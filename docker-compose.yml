@@ -1,0 +1,16 @@
+# Narjo Sing helper.
+# The only line you may need to change is your music folder: the part before ":/music:ro" below.
+services:
+  narjo-sing-helper:
+    build: .
+    image: narjo-sing-helper:latest
+    container_name: narjo-sing-helper
+    restart: unless-stopped
+    ports:
+      - "8765:8765"
+    volumes:
+      # Your music folder (the one Navidrome, Plex, Jellyfin or Emby use). Read-only: nothing is changed.
+      - /volume1/music:/music:ro
+      # The helper's own files: downloaded models, prepared songs and the access key.
+      - ./models:/models
+      - ./stems:/stems
