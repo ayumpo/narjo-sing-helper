@@ -174,3 +174,14 @@ def test_bookkeeping_failure_after_finish_keeps_the_job_done(setup, stems, monke
     assert worker(FakeRunner()).step() is True
     assert store.get(job.id).state == "done"
     assert read_meta(stems, key) is not None
+
+
+def test_a_job_interrupted_by_a_restart_moves_to_the_configured_model(setup):
+    import threading
+    store, file, key, _, worker = setup
+    job = store.submit(key, file.rel_path, file.duration, "upgrade", "retired_model", True)
+    store.mark_running(job.id)
+    stop = threading.Event()
+    stop.set()
+    worker(FakeRunner()).run_forever(stop)
+    assert (store.get(job.id).state, store.get(job.id).model) == ("queued", "melband_kim")

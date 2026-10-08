@@ -110,6 +110,9 @@ class Worker:
 
     def run_forever(self, stop: threading.Event) -> None:
         self.store.recover()
+        # After recover, so a job a restart interrupted also moves off a model that is no longer configured.
+        if self.status.plan is not None and (moved := self.store.retarget_queued(self.status.plan)):
+            log.info("Moved %d queued jobs to the configured models", moved)
         while not stop.is_set():
             try:
                 worked = self.step()

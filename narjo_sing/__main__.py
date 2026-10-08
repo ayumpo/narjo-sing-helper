@@ -42,8 +42,6 @@ def apply_benchmark(ctx: AppContext, bench: dict) -> None:
     ctx.status.device = bench["device"]
     ctx.status.timings = {t["model"]: ModelTiming(**t) for t in (bench["fast"], bench["best"])}
     ctx.status.plan = decide(s.fast_model, s.best_model, bench["fast"]["rt"], bench["best"]["rt"], s.best_upgrade)
-    if moved := ctx.store.retarget_queued(ctx.status.plan):
-        log.info("Moved %d queued jobs to the configured models", moved)
     ctx.status.benchmarking = False
 
 
