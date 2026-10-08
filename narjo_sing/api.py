@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from pydantic import BaseModel, Field
 
 from .auth import require_key
@@ -14,6 +14,7 @@ from .library.index import LibraryIndex
 from .library.matcher import MatchResult, SongQuery, match
 from .status import HelperStatus
 from .stems import read_meta, song_key, stem_path
+from .webui import render_index
 
 
 class SongRequest(BaseModel):
@@ -92,6 +93,10 @@ def create_app(ctx: AppContext) -> FastAPI:
             raise HTTPException(status_code=404, detail="Unknown job")
         return job
 
+    @app.get("/", response_class=HTMLResponse)
+    def index() -> HTMLResponse:
+        return HTMLResponse(render_index(ctx.version))
+
     @app.get("/v1/ping")
     def ping() -> dict:
         return {"ok": True}
@@ -110,6 +115,18 @@ def create_app(ctx: AppContext) -> FastAPI:
             "backgroundPrepRecommended": plan.background_prep_recommended if plan else False,
             "libraryFiles": ctx.index.count(),
         }
+
+    @app.get("/v1/queue", dependencies=auth)
+    def queue() -> dict:
+        jobs = [{"id": job.id, "relPath": job.rel_path, "model": job.model, "priority": job.priority,
+                 "state": job.state, "progress": round(job.progress, 3), "etaSeconds": job.eta,
+                 "created": job.created, "updated": job.updated} for job in ctx.store.queued_and_running()]
+        recent = []
+        for done in ctx.store.recent_done(limit=50):
+            meta = read_meta(ctx.settings.stems_dir, done.key)
+            recent.append({"relPath": done.rel_path, "quality": meta.quality if meta else None,
+                           "model": done.model, "finished": done.finished})
+        return {"jobs": jobs, "recent": recent}
 
     def refuse_if_broken() -> None:
         if ctx.status.error:

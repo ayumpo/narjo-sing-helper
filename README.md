@@ -103,6 +103,15 @@ The same key is saved to `/stems/access-key.txt` inside the `/stems` volume. Cop
 Narjo go to **Settings → Integrations → Sing**, enter the helper's URL and the access key, and
 use "Test connection" to confirm it works. Sing requires Narjo Pro.
 
+## Status page
+
+Open `http://<host>:8765/` in a browser to check on the helper directly. Without the access key
+it just confirms the helper is running and shows how to connect. Paste the key in to see live
+status: benchmark state, device, mode, model throughput, the current queue (running and queued
+jobs, with progress and ETA), and the last 50 songs that have stems prepared. The page polls
+every 5 seconds while visible; tick "Remember on this browser" to keep the key in that browser's
+local storage.
+
 ## Hardware and speed
 
 Measured speed, in seconds to separate 60 seconds of audio, using `audio-separator` defaults:
@@ -142,8 +151,9 @@ downloads them on first use from the public UVR model repository.
 
 ## API
 
-The helper listens on port 8765. Every route except `GET /v1/ping` requires the header
-`X-Narjo-Sing-Key` with the access key described above.
+The helper listens on port 8765. Every `/v1/...` route except `GET /v1/ping` requires the header
+`X-Narjo-Sing-Key` with the access key described above. `GET /` (the status page above) also
+needs no key, but shows nothing sensitive until a key is entered in the browser.
 
 - `GET /v1/ping` — `{ok: true}`. No key required; used as the container health check.
 - `GET /v1/health` — helper and benchmark status:
@@ -151,6 +161,11 @@ The helper listens on port 8765. Every route except `GET /v1/ping` requires the 
   bestSecondsPerMinute, queueLength, backgroundPrepRecommended, libraryFiles}`.
   `state` is `benchmarking`, `ready` or `error`; `error` is set only in the `error` state.
   `mode` is `single`, `two-tier` or `fast-only` once benchmarking has finished.
+- `GET /v1/queue` — read-only snapshot for the status page:
+  `{jobs: [{id, relPath, model, priority, state, progress, etaSeconds, created, updated}],
+  recent: [{relPath, quality, model, finished}]}`. `jobs` lists queued and running jobs in the
+  order the worker will run them (the running job, if any, first; then by priority and creation
+  time). `recent` lists the last 50 distinct songs with stems, most recently finished first.
 - `POST /v1/jobs` — submit a song:
   request `{clientSongId, title, durationSeconds, path?, albumArtist?, album?, disc?, track?,
   priority}` (`priority` is `now`, `next` or `batch`); response

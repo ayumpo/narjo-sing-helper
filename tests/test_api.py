@@ -172,3 +172,55 @@ def test_lookup_works_while_status_error_is_set(env):
     resp = client.post("/v1/stems/lookup", json={"songs": [SONG]})
     assert resp.status_code == 200
     assert resp.json() == [{"clientSongId": "s1", "ready": True, "quality": "fast"}]
+
+
+def test_index_page_needs_no_key_and_has_no_sensitive_text(env):
+    client, _, _ = env
+    bare = TestClient(client.app)
+    resp = bare.get("/")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/html")
+    body = resp.text
+    assert "Narjo Sing helper is running" in body and "0.1.0" in body
+    assert KEY not in body
+    assert "Ante Ti" not in body and "JC Negron" not in body and str(SONG["path"]) not in body
+
+
+def test_queue_requires_the_key(env):
+    client, _, _ = env
+    bare = TestClient(client.app)
+    assert bare.get("/v1/queue").status_code == 401
+
+
+def test_queue_lists_running_and_queued_in_run_order(env):
+    client, worker, _ = env
+    first = client.post("/v1/jobs", json={**SONG, "priority": "batch"}).json()
+    second_path = worker.settings.music_dir / "JC Negron/El Me Salvo/06 - Otra.flac"
+    make_flac(second_path, seconds=2, ALBUMARTIST="JC Negron", ALBUM="El Me Salvo", TITLE="Otra")
+    worker.index.scan()
+    second_song = {**SONG, "clientSongId": "s2", "title": "Otra", "path": str(second_path)}
+    second = client.post("/v1/jobs", json={**second_song, "priority": "now"}).json()
+    worker.store.mark_running(first["jobId"])
+    resp = client.get("/v1/queue")
+    assert resp.status_code == 200
+    jobs = resp.json()["jobs"]
+    assert [j["id"] for j in jobs] == [first["jobId"], second["jobId"]]
+    assert jobs[0]["state"] == "running" and jobs[1]["state"] == "queued"
+    assert jobs[1]["priority"] == "now"
+
+
+def test_queue_recent_is_deduplicated_by_path(env):
+    client, worker, _ = env
+    client.post("/v1/jobs", json={**SONG, "priority": "now"})
+    worker.step()
+    # A second submission of the same song answers "done" immediately (stems already exist),
+    # adding a second done row for the same rel_path that recent_done must collapse away.
+    client.post("/v1/jobs", json={**SONG, "priority": "now"})
+    resp = client.get("/v1/queue")
+    assert resp.status_code == 200
+    recent = resp.json()["recent"]
+    assert len(recent) == 1
+    assert recent[0]["relPath"] == "JC Negron/El Me Salvo/05 - Ante Ti.flac"
+    assert recent[0]["quality"] == "fast"
+    assert recent[0]["model"] == "htdemucs"
+    assert isinstance(recent[0]["finished"], float)

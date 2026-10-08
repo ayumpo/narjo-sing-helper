@@ -41,6 +41,14 @@ class Job:
     updated: float
 
 
+@dataclass(frozen=True)
+class DoneJob:
+    key: str
+    rel_path: str
+    model: str
+    finished: float
+
+
 class JobStore:
     def __init__(self, db_path: Path, clock=time.time):
         self._clock = clock
@@ -152,6 +160,25 @@ class JobStore:
     def queue_length(self) -> int:
         with self._lock:
             return self._db.execute("SELECT COUNT(*) FROM jobs WHERE state IN ('queued','running')").fetchone()[0]
+
+    def queued_and_running(self) -> list[Job]:
+        """Running first (there is at most one), then queued in the order the worker will run them."""
+        with self._lock:
+            rows = self._db.execute(
+                f"SELECT {COLUMNS} FROM jobs WHERE state IN ('queued','running') "
+                "ORDER BY (state != 'running'), priority, created").fetchall()
+            return [self._job(r) for r in rows]
+
+    def recent_done(self, limit: int = 50) -> list[DoneJob]:
+        """Most recently finished jobs, one row per rel_path (its latest completion)."""
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT key, rel_path, model, updated FROM ("
+                "  SELECT key, rel_path, model, updated,"
+                "         ROW_NUMBER() OVER (PARTITION BY rel_path ORDER BY updated DESC) AS rn"
+                "  FROM jobs WHERE state = 'done'"
+                ") WHERE rn = 1 ORDER BY updated DESC LIMIT ?", (limit,)).fetchall()
+            return [DoneJob(*r) for r in rows]
 
     def touch(self, key: str) -> None:
         with self._lock:
