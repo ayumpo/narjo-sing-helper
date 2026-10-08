@@ -32,10 +32,16 @@ container too.
 
 ### Synology (Container Manager)
 
-1. Container Manager → **Project** → **Create**.
-2. Paste the contents of `docker-compose.example.yml`, with `SING_MUSIC_DIR` and the volume
-   mount pointing at your library, e.g. `/volume1/data/Media/music`.
-3. Build and start the project.
+The image is built from this repository's files, so the project folder must contain them.
+
+1. On GitHub, **Code → Download ZIP**, and unzip it into a folder on the NAS, e.g.
+   `docker/narjo-sing-helper` (File Station), so that folder holds `Dockerfile` and
+   `docker-compose.example.yml`.
+2. Copy `docker-compose.example.yml` to `docker-compose.yml` in that folder and set both the
+   volume mount and `SING_MUSIC_DIR` to your library, e.g. `/volume1/data/Media/music`.
+3. Container Manager → **Project** → **Create** → set **Path** to that folder → it picks up
+   `docker-compose.yml` → **Build** → start the project. The first build downloads about 2–3 GB.
+4. Open the container's **Log** for the `Access key` line (also saved in `stems/access-key.txt`).
 
 ### Proxmox (LXC with Docker)
 
