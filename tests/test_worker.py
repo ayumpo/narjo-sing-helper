@@ -11,7 +11,7 @@ from narjo_sing.stems import read_meta, song_key
 from narjo_sing.tiers import TierPlan
 from narjo_sing.worker import Worker
 
-TWO_TIER = TierPlan("two-tier", "htdemucs", "bs_roformer", True, False)
+TWO_TIER = TierPlan("two-tier", "htdemucs", "melband_kim", True, False)
 
 
 @pytest.fixture
@@ -41,12 +41,12 @@ def test_fast_job_writes_stems_then_queues_the_upgrade(setup, stems):
     assert store.upgrade_pending(key)
     assert worker(runner).step() is True
     assert read_meta(stems, key).quality == "best"
-    assert [(m, bg) for m, bg, _ in runner.started] == [("htdemucs", False), ("bs_roformer", True)]
+    assert [(m, bg) for m, bg, _ in runner.started] == [("htdemucs", False), ("melband_kim", True)]
 
 
 def test_urgent_request_preempts_a_running_upgrade(setup):
     store, file, key, _, worker = setup
-    upgrade = store.submit(key, file.rel_path, file.duration, "upgrade", "bs_roformer", True)
+    upgrade = store.submit(key, file.rel_path, file.duration, "upgrade", "melband_kim", True)
 
     def on_poll(count):
         if count == 2:
@@ -75,7 +75,7 @@ def test_separation_failure_is_recorded(setup):
 
 def test_best_hours_hold_background_work(setup):
     store, file, key, _, worker = setup
-    store.submit(key, file.rel_path, file.duration, "upgrade", "bs_roformer", True)
+    store.submit(key, file.rel_path, file.duration, "upgrade", "melband_kim", True)
     held = worker(FakeRunner(), hours_now=clock_time(12, 0), SING_BEST_HOURS="01:00-07:00")
     assert held.step() is False
     allowed = worker(FakeRunner(), hours_now=clock_time(3, 0), SING_BEST_HOURS="01:00-07:00")

@@ -18,11 +18,11 @@ def test_defaults():
 def test_env_overrides():
     s = Settings.from_env({
         "SING_MUSIC_DIR": "/volume1/data/Media/music", "SING_BEST_UPGRADE": "ON",
-        "SING_BEST_HOURS": "01:00-07:00", "SING_STEM_CACHE_GB": "5", "SING_FAST_MODEL": "kim_vocal_2",
+        "SING_BEST_HOURS": "01:00-07:00", "SING_STEM_CACHE_GB": "5", "SING_FAST_MODEL": "melband_kim",
         "SING_MAX_MINUTES": "12",
     })
     assert s.music_dir == Path("/volume1/data/Media/music")
-    assert (s.best_upgrade, s.stem_cache_gb, s.fast_model) == ("on", 5.0, "kim_vocal_2")
+    assert (s.best_upgrade, s.stem_cache_gb, s.fast_model) == ("on", 5.0, "melband_kim")
     assert s.best_hours == (clock_time(1, 0), clock_time(7, 0))
     assert s.max_minutes == 12.0
 

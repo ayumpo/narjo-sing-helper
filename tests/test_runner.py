@@ -38,10 +38,9 @@ def tone(seconds: float = 1.0) -> np.ndarray:
 
 
 def test_catalog():
-    assert set(CATALOG) == {"htdemucs", "kim_vocal_2", "melband_kim", "bs_roformer"}
+    assert set(CATALOG) == {"htdemucs", "melband_kim"}
     assert CATALOG["melband_kim"].filename == "vocals_mel_band_roformer.ckpt"
     assert CATALOG["htdemucs"].separator_kwargs["demucs_params"]["shifts"] == 1
-    assert CATALOG["bs_roformer"].filename == "model_bs_roformer_ep_317_sdr_12.9755.ckpt"
     with pytest.raises(ValueError, match="choose one of"):
         model_spec("nope")
 
@@ -56,7 +55,7 @@ def test_round_trip_restores_unity_gain(runner):
 
 
 def test_background_jobs_run_niced(runner, tmp_path):
-    cmd = runner.build_command("bs_roformer", tmp_path / "in.wav", tmp_path / "out.wav", background=True)
+    cmd = runner.build_command("melband_kim", tmp_path / "in.wav", tmp_path / "out.wav", background=True)
     assert cmd[:3] == ["nice", "-n", "19"]
     assert runner.build_command("htdemucs", tmp_path / "in.wav", tmp_path / "out.wav", background=False)[0] != "nice"
 
@@ -70,7 +69,7 @@ def test_failure_reports_child_output(runner, monkeypatch):
 
 def test_cancel_stops_the_child(runner, monkeypatch):
     monkeypatch.setenv("STUB_SLEEP", "1")
-    run = runner.start("bs_roformer", tone(), background=False)
+    run = runner.start("melband_kim", tone(), background=False)
     run.cancel()
     assert run.poll() is True
 

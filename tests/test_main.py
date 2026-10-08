@@ -14,7 +14,7 @@ def test_build_and_apply_benchmark(tmp_path):
     ctx, worker = build(settings, FakeRunner())
     assert (tmp_path / "stems" / "access-key.txt").read_text().strip() == ctx.key
     apply_benchmark(ctx, {"device": "cpu: x", "fast": {"model": "htdemucs", "rt": 0.45, "load_seconds": 2.0},
-                          "best": {"model": "bs_roformer", "rt": 17.0, "load_seconds": 11.0}})
+                          "best": {"model": "melband_kim", "rt": 17.0, "load_seconds": 11.0}})
     assert ctx.status.plan.mode == "two-tier" and ctx.status.benchmarking is False
     assert worker.status is ctx.status
 

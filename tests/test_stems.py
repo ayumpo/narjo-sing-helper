@@ -58,7 +58,7 @@ def test_stem_pair_adds_back_to_the_source(stems):
 def test_better_stems_replace_the_previous_version(stems):
     source = sine(1, 0.5)
     first = write_stem_pair(stems, "k", source, source * 0.5, rel_path="x", model="htdemucs", quality="fast")
-    second = write_stem_pair(stems, "k", source, source * 0.4, rel_path="x", model="bs_roformer", quality="best")
+    second = write_stem_pair(stems, "k", source, source * 0.4, rel_path="x", model="melband_kim", quality="best")
     assert read_meta(stems, "k").etag == second.etag != first.etag
     assert not (stems / "k" / first.etag).exists()
     assert stem_path(stems, second, "vocals").exists()
