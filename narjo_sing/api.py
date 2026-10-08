@@ -11,7 +11,7 @@ from .auth import require_key
 from .config import Settings
 from .jobs import JobStore
 from .library.index import LibraryIndex
-from .library.matcher import SongQuery, match
+from .library.matcher import MatchResult, SongQuery, match
 from .status import HelperStatus
 from .stems import read_meta, song_key, stem_path
 
@@ -36,6 +36,10 @@ class BatchRequest(BaseModel):
     priority: Literal["batch"] = "batch"
 
 
+class LookupRequest(BaseModel):
+    songs: list[SongRequest] = Field(min_length=1, max_length=200)
+
+
 @dataclass
 class AppContext:
     settings: Settings
@@ -54,10 +58,13 @@ def create_app(ctx: AppContext) -> FastAPI:
         timing = ctx.status.timings.get(model) if model else None
         return round(timing.rt * 60, 1) if timing and timing.rt else None
 
+    def locate(song: SongRequest) -> MatchResult:
+        return match(ctx.index, SongQuery(title=song.title, duration=song.durationSeconds, path=song.path,
+                                           album_artist=song.albumArtist, album=song.album, disc=song.disc,
+                                           track=song.track))
+
     def submit(song: SongRequest, priority: str) -> dict:
-        result = match(ctx.index, SongQuery(title=song.title, duration=song.durationSeconds, path=song.path,
-                                            album_artist=song.albumArtist, album=song.album, disc=song.disc,
-                                            track=song.track))
+        result = locate(song)
         if result.file is None:
             return {"clientSongId": song.clientSongId, "state": "notFound", "searched": list(result.searched)}
         file = result.file
@@ -117,6 +124,18 @@ def create_app(ctx: AppContext) -> FastAPI:
     def create_batch(request: BatchRequest) -> list[dict]:
         refuse_if_broken()
         return [submit(song, "batch") for song in request.songs]
+
+    @app.post("/v1/stems/lookup", dependencies=auth)
+    def lookup_stems(request: LookupRequest) -> list[dict]:
+        # Read-only: an index lookup plus a meta.json read, no job rows, so stale `status.error` doesn't apply.
+        results = []
+        for song in request.songs:
+            file = locate(song).file
+            meta = read_meta(ctx.settings.stems_dir, song_key(file.rel_path, file.size, file.mtime_ns)) \
+                if file else None
+            results.append({"clientSongId": song.clientSongId, "ready": meta is not None,
+                             "quality": meta.quality if meta else None})
+        return results
 
     @app.get("/v1/jobs/{job_id}", dependencies=auth)
     def job_status(job_id: str) -> dict:

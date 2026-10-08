@@ -124,3 +124,51 @@ def test_submission_is_refused_while_status_error_is_set(env):
     assert job_resp.status_code == 503 and worker.status.error in job_resp.json()["detail"]
     batch_resp = client.post("/v1/jobs/batch", json={"songs": [SONG]})
     assert batch_resp.status_code == 503 and worker.status.error in batch_resp.json()["detail"]
+
+
+def _job_row_count(store) -> int:
+    return store._db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
+
+
+def test_lookup_reports_ready_songs_in_order_and_creates_no_jobs(env):
+    client, worker, _ = env
+    client.post("/v1/jobs", json={**SONG, "priority": "now"})
+    worker.step()
+    unknown = {**SONG, "clientSongId": "s3", "title": "Nope", "path": None}
+    before = _job_row_count(worker.store)
+    resp = client.post("/v1/stems/lookup", json={"songs": [SONG, unknown]})
+    assert resp.status_code == 200
+    assert resp.json() == [
+        {"clientSongId": "s1", "ready": True, "quality": "fast"},
+        {"clientSongId": "s3", "ready": False, "quality": None},
+    ]
+    assert _job_row_count(worker.store) == before
+
+
+def test_lookup_reports_not_ready_for_a_matched_song_with_no_stems(env):
+    client, _, _ = env
+    resp = client.post("/v1/stems/lookup", json={"songs": [SONG]})
+    assert resp.json() == [{"clientSongId": "s1", "ready": False, "quality": None}]
+
+
+def test_lookup_requires_the_key(env):
+    client, _, _ = env
+    bare = TestClient(client.app)
+    assert bare.post("/v1/stems/lookup", json={"songs": [SONG]}).status_code == 401
+
+
+def test_lookup_rejects_more_than_two_hundred_songs(env):
+    client, _, _ = env
+    songs = [{**SONG, "clientSongId": f"s{i}"} for i in range(201)]
+    assert client.post("/v1/stems/lookup", json={"songs": songs}).status_code == 422
+    assert client.post("/v1/stems/lookup", json={"songs": []}).status_code == 422
+
+
+def test_lookup_works_while_status_error_is_set(env):
+    client, worker, _ = env
+    client.post("/v1/jobs", json={**SONG, "priority": "now"})
+    worker.step()
+    worker.status.error = "Benchmark failed: htdemucs prepare blew up"
+    resp = client.post("/v1/stems/lookup", json={"songs": [SONG]})
+    assert resp.status_code == 200
+    assert resp.json() == [{"clientSongId": "s1", "ready": True, "quality": "fast"}]
