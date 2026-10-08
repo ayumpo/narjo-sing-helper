@@ -118,6 +118,61 @@ ready.
   its `models` and `stems` folders (they hold your prepared songs and access key). Then build again:
   Container Manager → **Project** → `narjo-sing` → **Action** → **Build**; or `docker compose up -d --build`.
 
+## Licenses and your music
+
+**This helper** is open-source software under the [MIT License](LICENSE), provided "as is", without warranty.
+
+**It doesn't include anyone else's software or AI models.** When you build and run it, *your* server downloads
+each of the components below directly from its publisher, under that component's own license. Narjo does not
+distribute them.
+
+| Component | What it does | License |
+|---|---|---|
+| Python, FastAPI, Uvicorn, NumPy, SoundFile and their libraries | Run the helper | PSF, MIT, BSD, Apache 2.0 |
+| PyTorch | Runs the AI models | BSD 3-Clause |
+| audio-separator | Loads and runs the separation models | MIT |
+| ONNX Runtime | Runs some models | MIT |
+| FFmpeg (Debian package) | Reads and writes audio files | LGPL / GPL |
+| soxr | Resamples audio | LGPL 2.1 or later |
+| Mutagen | Reads song tags (title, album…) | GPL 2.0 or later |
+| HTDemucs model, by Meta | Quick vocal separation | MIT |
+| BS-RoFormer model, by viperx, from the community UVR model repository | Best-quality vocal separation | **No license published by its author** |
+
+audio-separator also lists a package called `diffq`, which is licensed for non-commercial use only. This helper
+never uses it (it only matters for compressed models the helper doesn't load), so the helper installs a tiny
+stand-in of its own instead (`third_party/diffq_stub`, MIT) and the real `diffq` is never downloaded.
+
+### Using only openly licensed models
+
+The best-quality BS-RoFormer model has no published license. To use only models with an open license, add an
+`environment` line to `docker-compose.yml`, so the helper part looks like this:
+
+```yaml
+  narjo-sing-helper:
+    build: .
+    image: narjo-sing-helper:latest
+    container_name: narjo-sing-helper
+    restart: unless-stopped
+    environment:
+      SING_BEST_MODEL: htdemucs
+```
+
+The helper then uses HTDemucs (MIT) for every song and never downloads BS-RoFormer. Sing still works; the
+voice is removed a little less cleanly.
+
+### Your music
+
+- Use Sing only with music you own or are licensed to use, for your own personal, private enjoyment.
+- The "vocals" and "music" versions are made and kept on your own server and your own devices. Nothing is sent
+  to Narjo or to anyone else.
+- Don't share, publish, sell or perform them publicly unless you have the rights to do so.
+
+### Trademarks
+
+Apple Music Sing is a trademark of Apple Inc. Narjo is not affiliated with, endorsed by or sponsored by Apple.
+Navidrome, Plex, Jellyfin, Emby, Synology, Proxmox, Unraid, Docker and Portainer are trademarks of their
+respective owners.
+
 ## For technical users
 
 ### How it works
@@ -177,15 +232,6 @@ best models on your hardware and picks one of three modes:
 
 `GET /v1/health` reports the active mode plus measured throughput, so you can see which tier
 your hardware landed in.
-
-### Model licenses
-
-Model weights are not shipped with this project or baked into the Docker image. Your own server
-downloads them on first use from the public UVR model repository.
-
-- **HTDemucs** is MIT-licensed.
-- The **BS-RoFormer (viperx)** weights carry no published license. They are used here only on
-  your own hardware, for your own library, and are never redistributed by this project.
 
 ### Docker on a Mac
 

@@ -66,9 +66,11 @@ def load_or_run(path: Path, runner, settings: Settings, version: str, force: boo
             return cached
     device = _with_retries(runner.device, sleep=sleep)
     fast = _with_retries(lambda: time_model(runner, settings.fast_model, background=False), sleep=sleep)
+    best = fast if settings.best_model == settings.fast_model else None
     try:
-        best = _with_retries(
-            lambda: time_model(runner, settings.best_model, background=True, max_rt=UPGRADE_MAX_RT), sleep=sleep)
+        if best is None:
+            best = _with_retries(
+                lambda: time_model(runner, settings.best_model, background=True, max_rt=UPGRADE_MAX_RT), sleep=sleep)
     except Exception as exc:
         log.warning("Best-tier benchmark failed after retries; continuing fast-only: %s", exc)
         best = ModelTiming(settings.best_model, None, 0.0)

@@ -100,3 +100,18 @@ def test_results_are_cached_per_version_and_models(tmp_path):
     assert load_or_run(tmp_path / "benchmark.json", runner, settings, "0.1.0") == first and runner.started == []
     load_or_run(tmp_path / "benchmark.json", runner, settings, "0.2.0")
     assert len(runner.started) == 2
+
+
+def test_one_model_for_both_tiers_never_upgrades():
+    for fast_rt in (0.4, 7.0):
+        plan = decide("htdemucs", "htdemucs", fast_rt=fast_rt, best_rt=fast_rt, best_upgrade="auto")
+        assert (plan.mode, plan.now_model, plan.best_model, plan.upgrade) == ("single", "htdemucs", "htdemucs", False)
+        assert plan.background_prep_recommended is (fast_rt > 2)
+
+
+def test_one_model_for_both_tiers_is_benchmarked_and_downloaded_once(tmp_path):
+    settings = Settings.from_env({"SING_STEMS_DIR": str(tmp_path), "SING_BEST_MODEL": "htdemucs"})
+    runner = FakeRunner(polls_needed=1)
+    result = load_or_run(tmp_path / "benchmark.json", runner, settings, "0.1.0")
+    assert set(runner.prepared) == {"htdemucs"} and len(runner.started) == 1
+    assert result["best"] == result["fast"]

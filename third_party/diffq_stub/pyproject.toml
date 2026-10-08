@@ -1,0 +1,16 @@
+# A local stand-in for the `diffq` package, which audio-separator lists as a dependency but this helper never
+# uses: diffq only restores *quantized* Demucs checkpoints, and HTDemucs/BS-RoFormer are not quantized.
+# Installing this first satisfies that dependency, so the real diffq (CC BY-NC 4.0) is never downloaded.
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "diffq"
+version = "0.2.99+narjo.stub"
+description = "Narjo Sing helper's MIT stand-in for diffq; quantized Demucs models are not supported"
+license = {text = "MIT"}
+requires-python = ">=3.11"
+
+[tool.setuptools]
+packages = ["diffq"]
