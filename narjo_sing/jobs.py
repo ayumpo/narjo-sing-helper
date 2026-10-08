@@ -141,6 +141,33 @@ class JobStore:
     def requeue(self, job_id: str) -> None:
         self._set(job_id, "state = 'queued', progress = 0, eta = NULL", ())
 
+    def retarget_queued(self, plan) -> int:
+        """Points queued jobs at the models `plan` uses now, after a model setting changed. Upgrades are dropped
+        when the plan has none, and a job that would duplicate one already queued or running is dropped. Returns
+        how many jobs changed."""
+        changed = 0
+        with self._lock:
+            rows = self._db.execute(f"SELECT {COLUMNS} FROM jobs WHERE state = 'queued' ORDER BY created").fetchall()
+            for job in map(self._job, rows):
+                if job.priority == "upgrade" and not plan.upgrade:
+                    self._db.execute("DELETE FROM jobs WHERE id = ?", (job.id,))
+                    changed += 1
+                    continue
+                model = plan.model_for(job.priority)
+                if model == job.model:
+                    continue
+                twin = self._db.execute(
+                    "SELECT 1 FROM jobs WHERE key = ? AND model = ? AND state IN ('queued','running') AND id != ?",
+                    (job.key, model, job.id)).fetchone()
+                if twin is not None:
+                    self._db.execute("DELETE FROM jobs WHERE id = ?", (job.id,))
+                else:
+                    self._db.execute("UPDATE jobs SET model = ?, updated = ? WHERE id = ?",
+                                     (model, self._clock(), job.id))
+                changed += 1
+            self._db.commit()
+        return changed
+
     def recover(self) -> int:
         with self._lock:
             cursor = self._db.execute("UPDATE jobs SET state = 'queued', progress = 0 WHERE state = 'running'")

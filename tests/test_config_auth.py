@@ -11,7 +11,7 @@ def test_defaults():
     s = Settings.from_env({})
     assert (s.music_dir, s.models_dir, s.stems_dir) == (Path("/music"), Path("/models"), Path("/stems"))
     assert (s.port, s.stem_cache_gb, s.rescan_minutes) == (8765, 50.0, 10)
-    assert (s.fast_model, s.best_model, s.best_upgrade, s.best_hours) == ("htdemucs", "bs_roformer", "auto", None)
+    assert (s.fast_model, s.best_model, s.best_upgrade, s.best_hours) == ("htdemucs", "melband_kim", "auto", None)
     assert s.max_minutes == 20.0
 
 

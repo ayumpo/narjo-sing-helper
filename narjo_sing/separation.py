@@ -20,6 +20,7 @@ CATALOG: dict[str, ModelSpec] = {
     "htdemucs": ModelSpec("htdemucs", "htdemucs.yaml", {"demucs_params": {
         "segment_size": "Default", "shifts": 1, "overlap": 0.25, "segments_enabled": True}}),
     "kim_vocal_2": ModelSpec("kim_vocal_2", "Kim_Vocal_2.onnx"),
+    "melband_kim": ModelSpec("melband_kim", "vocals_mel_band_roformer.ckpt"),
     "bs_roformer": ModelSpec("bs_roformer", "model_bs_roformer_ep_317_sdr_12.9755.ckpt"),
 }
 
@@ -53,9 +54,11 @@ def prepare_model(model_key: str, models_dir: Path) -> None:
 def separate_vocals_file(model_key: str, input_wav: Path, output_wav: Path, models_dir: Path) -> None:
     with tempfile.TemporaryDirectory(dir=output_wav.parent) as work:
         separator = _separator(model_key, models_dir, Path(work))
-        outputs = separator.separate(str(input_wav), custom_output_names={"Vocals": "vocals"})
+        # Models name the stem "Vocals" (BS-RoFormer) or "vocals" (MelBand RoFormer); both map to one file name.
+        outputs = separator.separate(str(input_wav), custom_output_names={"Vocals": "vocals", "vocals": "vocals"})
         produced = [Path(work) / Path(p).name for p in outputs]
-        vocals = next((p for p in produced if p.stem.lower() == "vocals" and p.exists()), None)
+        vocals = next((p for p in produced if p.exists() and (p.stem.lower() == "vocals"
+                                                             or "(vocals)" in p.name.lower())), None)
         if vocals is None:
             raise RuntimeError(f"{model_spec(model_key).filename} produced no vocals stem: {[p.name for p in produced]}")
         shutil.move(str(vocals), str(output_wav))

@@ -38,7 +38,8 @@ def tone(seconds: float = 1.0) -> np.ndarray:
 
 
 def test_catalog():
-    assert set(CATALOG) == {"htdemucs", "kim_vocal_2", "bs_roformer"}
+    assert set(CATALOG) == {"htdemucs", "kim_vocal_2", "melband_kim", "bs_roformer"}
+    assert CATALOG["melband_kim"].filename == "vocals_mel_band_roformer.ckpt"
     assert CATALOG["htdemucs"].separator_kwargs["demucs_params"]["shifts"] == 1
     assert CATALOG["bs_roformer"].filename == "model_bs_roformer_ep_317_sdr_12.9755.ckpt"
     with pytest.raises(ValueError, match="choose one of"):

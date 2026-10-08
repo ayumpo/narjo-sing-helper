@@ -71,7 +71,7 @@ def test_time_model_gives_up_past_the_cap():
 
 def test_best_tier_failure_falls_back_to_fast_only_after_retries(tmp_path):
     settings = Settings.from_env({"SING_STEMS_DIR": str(tmp_path)})
-    runner = FakeRunner(fail_prepare_models={"bs_roformer"})
+    runner = FakeRunner(fail_prepare_models={"melband_kim"})
     sleeps = []
     result = load_or_run(tmp_path / "benchmark.json", runner, settings, "0.1.0", sleep=sleeps.append)
     assert result["best"]["rt"] is None

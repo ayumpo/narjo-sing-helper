@@ -135,17 +135,20 @@ distribute them.
 | FFmpeg (Debian package) | Reads and writes audio files | LGPL / GPL |
 | soxr | Resamples audio | LGPL 2.1 or later |
 | Mutagen | Reads song tags (title, album…) | GPL 2.0 or later |
-| HTDemucs model, by Meta | Quick vocal separation | MIT |
-| BS-RoFormer model, by viperx, from the community UVR model repository | Best-quality vocal separation | **No license published by its author** |
+| HTDemucs model, by Meta | Quick vocal separation | MIT (Meta's Demucs project; Meta published no separate license for the trained weights) |
+| MelBand RoFormer vocal model, by Kimberley Jensen | Best-quality vocal separation (default) | MIT |
+| BS-RoFormer model, by viperx (optional, **off by default**) | Alternative best-quality separation | **No license published by its author** |
 
 audio-separator also lists a package called `diffq`, which is licensed for non-commercial use only. This helper
 never uses it (it only matters for compressed models the helper doesn't load), so the helper installs a tiny
 stand-in of its own instead (`third_party/diffq_stub`, MIT) and the real `diffq` is never downloaded.
 
-### Using only openly licensed models
+### Which models it uses
 
-The best-quality BS-RoFormer model has no published license. To use only models with an open license, add an
-`environment` line to `docker-compose.yml`, so the helper part looks like this:
+**By default, every model the helper uses is openly licensed:** HTDemucs for the quick version and
+Kimberley Jensen's MelBand RoFormer for the best-quality version, both MIT.
+
+You can change this with one `environment` line in `docker-compose.yml`, so the helper part looks like this:
 
 ```yaml
   narjo-sing-helper:
@@ -157,8 +160,11 @@ The best-quality BS-RoFormer model has no published license. To use only models 
       SING_BEST_MODEL: htdemucs
 ```
 
-The helper then uses HTDemucs (MIT) for every song and never downloads BS-RoFormer. Sing still works; the
-voice is removed a little less cleanly.
+| `SING_BEST_MODEL` | What happens |
+|---|---|
+| `melband_kim` (default) | Quick version first, then a cleaner MelBand RoFormer version in the background. MIT. |
+| `htdemucs` | HTDemucs (MIT) for every song: lighter on slow hardware, the voice is removed a little less cleanly. |
+| `bs_roformer` | BS-RoFormer instead of MelBand. Its author has **not published a license** for it, so it is off unless you choose it here; turning it on means your server downloads and uses it on your own responsibility. It is also several times slower. |
 
 ### Your music
 
@@ -178,7 +184,7 @@ respective owners.
 ### How it works
 
 On first start the helper indexes the mounted library, generates an access key, and benchmarks two models
-on your hardware: a fast one (HTDemucs) that answers the mic right away, and a best one (BS-RoFormer) that
+on your hardware: a fast one (HTDemucs) that answers the mic right away, and a best one (MelBand RoFormer) that
 re-separates songs in the background, at low priority, when it is fast enough to be worthwhile. Narjo asks
 for the current song and the next two; finished stems are cached on both the server and the phone.
 
@@ -194,8 +200,8 @@ All variables are read once, at startup.
 | `SING_PORT` | `8765` | TCP port the helper listens on. |
 | `SING_STEM_CACHE_GB` | `50` | Maximum total size of the stems cache, in GB. Least-recently-used stems are evicted first. |
 | `SING_RESCAN_MINUTES` | `10` | How often the library index is refreshed. Only files whose size or modification time changed are re-read. |
-| `SING_FAST_MODEL` | `htdemucs` | Model used for `now`/`next` jobs. One of `htdemucs`, `kim_vocal_2`, `bs_roformer`. |
-| `SING_BEST_MODEL` | `bs_roformer` | Model used for `batch` jobs and background upgrades. Same choices as above. |
+| `SING_FAST_MODEL` | `htdemucs` | Model used for `now`/`next` jobs. One of `htdemucs`, `kim_vocal_2`, `melband_kim`, `bs_roformer` (see "Which models it uses"; Kim Vocal 2's license is not stated by its author). |
+| `SING_BEST_MODEL` | `melband_kim` | Model used for `batch` jobs and background upgrades. Same choices as above; set it equal to `SING_FAST_MODEL` to use one model for everything. Changing it moves already-queued jobs to the new model on the next start. |
 | `SING_BEST_UPGRADE` | `auto` | `auto` decides the tier mode from the benchmark; `on` forces two-tier background upgrades even if the benchmark alone would not enable them; `off` disables them. |
 | `SING_BEST_HOURS` | unset | Optional `HH:MM-HH:MM` window (e.g. `01:00-07:00`) restricting when best-tier background work is allowed to run. `H:MM` and an en dash separator are also accepted; the two endpoints must differ. Unset means any time. The window uses the **container's local time**, so set `TZ` (e.g. `TZ: America/New_York`) in `docker-compose.yml` if you rely on this. |
 | `SING_MAX_MINUTES` | `20` | Songs longer than this (by the indexed duration) are rejected immediately, without decoding. Must be > 0. |
@@ -213,6 +219,7 @@ Measured speed, in seconds to separate 60 seconds of audio, using `audio-separat
 |---|---|---|---|
 | HTDemucs (2 passes) | ~16 | 54 | 933 |
 | Kim Vocal 2 | ~30 | 53 | 396 |
+| MelBand RoFormer (Kim) | not measured | ~280 | not measured |
 | BS-RoFormer | ~100 (MLX) to ~405 (MPS) | ~1050 | hours |
 
 The helper itself runs HTDemucs with a single pass, roughly half the 2-pass time shown above,

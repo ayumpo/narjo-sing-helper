@@ -25,9 +25,9 @@ def env(music, stems):
     index = LibraryIndex(stems / "index.sqlite", music)
     index.scan()
     store = JobStore(stems / "jobs.sqlite")
-    status = HelperStatus(device="cpu: test", plan=TierPlan("two-tier", "htdemucs", "bs_roformer", True, False),
+    status = HelperStatus(device="cpu: test", plan=TierPlan("two-tier", "htdemucs", "melband_kim", True, False),
                           timings={"htdemucs": ModelTiming("htdemucs", 0.5, 2.0),
-                                   "bs_roformer": ModelTiming("bs_roformer", 17.0, 11.0)},
+                                   "melband_kim": ModelTiming("melband_kim", 17.0, 11.0)},
                           benchmarking=False)
     ctx = AppContext(settings, KEY, index, store, status, "0.1.0")
     client = TestClient(create_app(ctx))
