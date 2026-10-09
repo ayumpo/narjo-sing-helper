@@ -54,6 +54,43 @@ def test_urgent_detection_requeue_and_recover(store):
     assert store.get(job.id).state == "queued" and store.get(job.id).eta is None
 
 
+def test_has_other_now_queued_detects_a_different_songs_request(store):
+    job = store.submit("a", "a", 1, "now", "melband_kim", False)
+    store.mark_running(job.id)
+    assert store.has_other_now_queued("a") is False
+    store.submit("b", "b", 1, "now", "htdemucs", False)
+    assert store.has_other_now_queued("a") is True
+
+
+def test_has_other_now_queued_ignores_a_queued_job_for_the_same_song(store):
+    job = store.submit("a", "a", 1, "now", "melband_kim", False)
+    store.mark_running(job.id)
+    store.submit("a", "a", 1, "now", "htdemucs", False)  # a different model, so a second job rather than a merge
+    assert store.has_other_now_queued("a") is False
+
+
+def test_set_aside_requeues_a_running_now_job_and_demotes_it_to_next(store):
+    job = store.submit("a", "a", 1, "now", "melband_kim", False)
+    store.mark_running(job.id)
+    store.update_progress(job.id, 0.5, 30.0)
+    store.set_aside(job.id)
+    updated = store.get(job.id)
+    assert (updated.state, updated.priority, updated.progress, updated.eta) == ("queued", "next", 0.0, None)
+
+
+def test_set_aside_leaves_a_non_now_priority_alone(store):
+    job = store.submit("a", "a", 1, "batch", "melband_kim", True)
+    store.mark_running(job.id)
+    store.set_aside(job.id)
+    assert (store.get(job.id).state, store.get(job.id).priority) == ("queued", "batch")
+
+
+def test_set_aside_only_affects_a_running_job(store):
+    queued = store.submit("a", "a", 1, "now", "melband_kim", False)
+    store.set_aside(queued.id)
+    assert (store.get(queued.id).state, store.get(queued.id).priority) == ("queued", "now")
+
+
 def test_progress_finish_fail(store):
     job = store.submit("k", "x", 100, "now", "htdemucs", False)
     store.mark_running(job.id)
@@ -184,6 +221,7 @@ def test_a_cancelled_job_cannot_start_be_set_aside_or_fail(store):
     store.mark_running(running.id)
     store.cancel_song(running.id)
     store.requeue(running.id)
+    store.set_aside(running.id)
     store.fail(running.id, "late failure")
     assert store.get(running.id).state == "cancelled" and store.get(running.id).error is None
     assert store.next_runnable(allow_background=True) is None

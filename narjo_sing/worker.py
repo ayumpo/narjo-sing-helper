@@ -103,7 +103,8 @@ class Worker:
         return True
 
     def _wait(self, job: Job, run, expected: float) -> bool:
-        """Polls `run` until it finishes. False when it was cancelled or set aside for an urgent request. While
+        """Polls `run` until it finishes. False when it was cancelled, or set aside — for an urgent background
+        request, or because a different song's `now` request pre-empts a running foreground Best job. While
         the helper is paused the run is frozen, and the paused time counts neither as progress nor toward the ETA."""
         started = self._clock()
         paused_for = 0.0
@@ -125,6 +126,12 @@ class Worker:
                 paused_for += self._clock() - paused_at
                 paused_at = None
                 log.info("Resumed %s", job.rel_path)
+            if (not job.background and job.model == self.settings.best_model
+                    and self.store.has_other_now_queued(job.key)):
+                run.cancel()
+                self.store.set_aside(job.id)
+                log.info("Set %s aside for the song now playing", job.rel_path)
+                return False
             if job.background and self.store.has_urgent_queued():
                 run.cancel()
                 self.store.requeue(job.id)

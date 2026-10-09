@@ -143,6 +143,13 @@ class JobStore:
             return self._db.execute("SELECT 1 FROM jobs WHERE state = 'queued' AND priority <= ? LIMIT 1",
                                     (URGENT_MAX,)).fetchone() is not None
 
+    def has_other_now_queued(self, key: str) -> bool:
+        """Whether some other song has a queued `now` request: the one the listener just skipped to."""
+        with self._lock:
+            return self._db.execute(
+                "SELECT 1 FROM jobs WHERE state = 'queued' AND priority = ? AND key != ? LIMIT 1",
+                (PRIORITY["now"], key)).fetchone() is not None
+
     def mark_running(self, job_id: str) -> bool:
         """False when the job was cancelled after the worker picked it."""
         return self._set(job_id, "state = 'running', progress = 0", (), only_if="state = 'queued'")
@@ -158,6 +165,13 @@ class JobStore:
 
     def requeue(self, job_id: str) -> None:
         self._set(job_id, "state = 'queued', progress = 0, eta = NULL", (), only_if="state = 'running'")
+
+    def set_aside(self, job_id: str) -> None:
+        """Running only: back to the queue with no progress, a `now` priority lowered to `next` so this job
+        can't cut back in front of the song that pre-empted it. A lower priority is left as it is."""
+        self._set(job_id, "state = 'queued', progress = 0, eta = NULL, "
+                  "priority = CASE priority WHEN ? THEN ? ELSE priority END",
+                  (PRIORITY["now"], PRIORITY["next"]), only_if="state = 'running'")
 
     def cancel_song(self, job_id: str) -> int | None:
         """Cancels every queued or running job for `job_id`'s song, each model and the upgrade too. Returns how many
