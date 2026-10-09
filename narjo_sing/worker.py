@@ -86,13 +86,15 @@ class Worker:
             self.store.fail(job.id, f"Unexpected worker error: {exc}"[:500])
             log.exception("Worker step failed for %s (job %s)", job.rel_path, job.id)
             return True
+        cancelled = self.store.is_cancelled(job.id)
         self.store.finish(job.id)
         # The stems are published and the job is done; a failure below must not turn it into "failed".
         try:
             self.store.touch(job.key)
-            # Automatic queues the better copy after the fast one; Both queued it with the request.
-            if quality == "fast" and job.requested_quality == "auto" and upgrade_wanted("auto", plan,
-                                                                                         self._best_usable()):
+            # Automatic queues the better copy after the fast one; Both queued it with the request. A song cancelled
+            # once its result existed keeps this copy and gets no better one.
+            if (not cancelled and quality == "fast" and job.requested_quality == "auto"
+                    and upgrade_wanted("auto", plan, self._best_usable())):
                 self.store.submit(job.key, job.rel_path, job.duration, "upgrade", plan.best_model, background=True)
         except Exception:
             log.exception("Bookkeeping after %s failed (job %s)", job.rel_path, job.id)

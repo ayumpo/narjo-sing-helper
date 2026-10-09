@@ -297,6 +297,7 @@ def test_a_cancel_that_arrives_once_the_result_exists_keeps_the_copy(setup, stem
     monkeypatch.setattr(worker_module, "write_stem_pair", write_then_cancel)
     assert worker(FakeRunner()).step() is True
     assert store.get(job.id).state == "done" and read_meta(stems, key) is not None
+    assert store.upgrade_pending(key) is False
 
 
 def test_an_explicit_best_copy_is_labelled_best_on_a_fast_only_server(setup, stems):
