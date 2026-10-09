@@ -1,4 +1,7 @@
+import os
+import subprocess
 import sys
+import time
 
 import numpy as np
 import pytest
@@ -17,6 +20,8 @@ if args[0] == "prepare":
     sys.exit(0)
 if os.environ.get("STUB_SLEEP"):
     time.sleep(60)
+if os.environ.get("STUB_DELAY"):
+    time.sleep(float(os.environ["STUB_DELAY"]))
 if os.environ.get("STUB_FAIL"):
     print("model exploded")
     sys.exit(3)
@@ -117,3 +122,42 @@ def test_real_htdemucs_separates_a_clip(tmp_path):
         pass
     vocals = run.result()
     assert vocals.shape[0] == 2 and abs(vocals.shape[1] - 6 * SAMPLE_RATE) < SAMPLE_RATE // 10
+
+
+def process_state(pid: int) -> str:
+    return subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+
+
+def test_the_child_leads_its_own_process_group(runner, monkeypatch):
+    monkeypatch.setenv("STUB_SLEEP", "1")
+    run = runner.start("htdemucs", tone(), background=False)
+    try:
+        assert os.getpgid(run.process.pid) == run.process.pid
+    finally:
+        run.cancel()
+
+
+def test_suspend_freezes_the_child_and_resume_lets_it_finish(runner, monkeypatch):
+    monkeypatch.setenv("STUB_DELAY", "0.5")
+    source = tone()
+    run = runner.start("htdemucs", source, background=False)
+    run.suspend()
+    assert run.suspended and process_state(run.process.pid).startswith("T")
+    time.sleep(1.0)
+    assert run.poll() is False  # its half second of work is long past, but a frozen process cannot finish
+    run.resume()
+    assert not run.suspended
+    deadline = time.monotonic() + 20
+    while not run.poll():
+        assert time.monotonic() < deadline
+        time.sleep(0.05)
+    assert np.allclose(run.result(), source, atol=1e-5)
+
+
+def test_cancel_stops_a_suspended_child_promptly(runner, monkeypatch):
+    monkeypatch.setenv("STUB_SLEEP", "1")
+    run = runner.start("melband_kim", tone(), background=False)
+    run.suspend()
+    started = time.monotonic()
+    run.cancel()
+    assert run.poll() is True and time.monotonic() - started < 5

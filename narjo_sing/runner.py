@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -33,6 +35,7 @@ class SubprocessRun:
         self.process = process
         self.run_dir = run_dir
         self._log = log
+        self.suspended = False
 
     def poll(self) -> bool:
         return self.process.poll() is not None
@@ -48,15 +51,34 @@ class SubprocessRun:
         finally:
             shutil.rmtree(self.run_dir, ignore_errors=True)
 
+    def suspend(self) -> None:
+        """Freezes the separation where it is: its CPU is free until `resume`, its memory stays in use."""
+        self._signal(signal.SIGSTOP)
+        self.suspended = True
+
+    def resume(self) -> None:
+        self._signal(signal.SIGCONT)
+        self.suspended = False
+
     def cancel(self) -> None:
-        self.process.terminate()
+        self._signal(signal.SIGTERM)
+        if self.suspended:
+            # A stopped process acts on SIGTERM only once it runs again.
+            self._signal(signal.SIGCONT)
         try:
             self.process.wait(timeout=10)
         except subprocess.TimeoutExpired:
-            self.process.kill()
+            self._signal(signal.SIGKILL)
             self.process.wait()
         self._log.close()
         shutil.rmtree(self.run_dir, ignore_errors=True)
+
+    def _signal(self, sig: int) -> None:
+        # The child leads its own process group (`start_new_session`), so anything it started gets the signal too.
+        try:
+            os.killpg(self.process.pid, sig)
+        except ProcessLookupError:
+            pass
 
 
 class SubprocessRunner:
@@ -94,5 +116,5 @@ class SubprocessRunner:
         write_float_wav(source * HEADROOM, run_dir / "input.wav")
         log = open(run_dir / "child.log", "wb")
         command = self.build_command(model_key, run_dir / "input.wav", run_dir / "vocals.wav", background)
-        process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT)
+        process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
         return SubprocessRun(process, run_dir, log)
