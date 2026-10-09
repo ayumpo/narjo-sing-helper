@@ -16,23 +16,30 @@ KEY = "test-key"
 SONG = {"clientSongId": "s1", "title": "Ante Ti", "durationSeconds": 2.0, "album": "El Me Salvo",
         "albumArtist": "JC Negron", "path": "/music/JC Negron/El Me Salvo/05 - Ante Ti.flac"}
 
+TWO_TIER = TierPlan("two-tier", "htdemucs", "melband_kim", True, False)
+FAST_ONLY = TierPlan("fast-only", "htdemucs", None, False, True)
+TIMINGS = {"htdemucs": ModelTiming("htdemucs", 0.5, 2.0), "melband_kim": ModelTiming("melband_kim", 17.0, 11.0)}
 
-@pytest.fixture
-def env(music, stems):
+
+def build_env(music, stems, plan=TWO_TIER, timings=None):
     make_flac(music / "JC Negron/El Me Salvo/05 - Ante Ti.flac", seconds=2,
               ALBUMARTIST="JC Negron", ALBUM="El Me Salvo", TITLE="Ante Ti")
     settings = Settings.from_env({"SING_MUSIC_DIR": str(music), "SING_STEMS_DIR": str(stems)})
     index = LibraryIndex(stems / "index.sqlite", music)
     index.scan()
     store = JobStore(stems / "jobs.sqlite")
-    status = HelperStatus(device="cpu: test", plan=TierPlan("two-tier", "htdemucs", "melband_kim", True, False),
-                          timings={"htdemucs": ModelTiming("htdemucs", 0.5, 2.0),
-                                   "melband_kim": ModelTiming("melband_kim", 17.0, 11.0)},
+    status = HelperStatus(device="cpu: test", plan=plan, timings=dict(TIMINGS if timings is None else timings),
                           benchmarking=False)
     ctx = AppContext(settings, KEY, index, store, status, "0.1.0")
     client = TestClient(create_app(ctx))
     client.headers["X-Narjo-Sing-Key"] = KEY
     worker = Worker(store, index, FakeRunner(), settings, status, sleep=lambda _: None)
+    return client, worker, stems, store
+
+
+@pytest.fixture
+def env(music, stems):
+    client, worker, stems, _ = build_env(music, stems)
     return client, worker, stems
 
 
@@ -224,3 +231,108 @@ def test_queue_recent_is_deduplicated_by_path(env):
     assert recent[0]["quality"] == "fast"
     assert recent[0]["model"] == "htdemucs"
     assert isinstance(recent[0]["finished"], float)
+
+
+LOOKUP_SONG = {k: SONG[k] for k in ("clientSongId", "title", "durationSeconds", "path")}
+
+
+def queued(client):
+    return [(job["priority"], job["model"], job["requestedQuality"]) for job in client.get("/v1/queue").json()["jobs"]]
+
+
+def test_fast_asks_for_the_fast_model_and_never_a_better_copy(env):
+    client, worker, _ = env
+    client.post("/v1/jobs", json={**SONG, "priority": "now", "quality": "fast"})
+    assert queued(client) == [("now", "htdemucs", "fast")]
+    assert client.get("/v1/queue").json()["jobs"][0]["quality"] == "fast"
+    worker.step()
+    assert queued(client) == []
+
+
+def test_best_asks_for_the_better_model_straight_away(env):
+    client, _, _ = env
+    client.post("/v1/jobs", json={**SONG, "priority": "now", "quality": "best"})
+    assert queued(client) == [("now", "melband_kim", "best")]
+    assert client.get("/v1/queue").json()["jobs"][0]["quality"] == "best"
+
+
+def test_both_asks_for_fast_now_and_queues_the_better_copy_once(env):
+    client, _, _ = env
+    client.post("/v1/jobs", json={**SONG, "priority": "now", "quality": "both"})
+    client.post("/v1/jobs", json={**SONG, "priority": "now", "quality": "both"})
+    assert queued(client) == [("now", "htdemucs", "both"), ("upgrade", "melband_kim", "both")]
+
+
+def test_both_queues_the_better_copy_even_on_a_fast_only_server(music, stems):
+    client, _, _, _ = build_env(music, stems, plan=FAST_ONLY)
+    client.post("/v1/jobs", json={**SONG, "priority": "now", "quality": "both"})
+    assert queued(client) == [("now", "htdemucs", "both"), ("upgrade", "melband_kim", "both")]
+
+
+def test_best_with_only_a_fast_copy_prepares_the_better_one(env):
+    client, worker, _ = env
+    client.post("/v1/jobs", json={**SONG, "priority": "now", "quality": "fast"})
+    worker.step()
+    assert client.post("/v1/jobs", json={**SONG, "priority": "now", "quality": "best"}).json()["state"] == "queued"
+    assert queued(client) == [("now", "melband_kim", "best")]
+    assert client.post("/v1/jobs", json={**SONG, "priority": "next", "quality": "fast"}).json()["state"] == "done"
+
+
+def test_an_unavailable_better_model_falls_back_to_fast(music, stems):
+    client, _, _, _ = build_env(music, stems, timings={**TIMINGS, "melband_kim": ModelTiming("melband_kim", None, 0.0)})
+    assert client.get("/v1/health").json()["bestStatus"] == "unavailable"
+    client.post("/v1/jobs", json={**SONG, "priority": "now", "quality": "both"})
+    assert queued(client) == [("now", "htdemucs", "both")]
+
+
+def test_lookup_answers_for_the_chosen_quality(env):
+    client, worker, _ = env
+    client.post("/v1/jobs", json={**SONG, "priority": "now", "quality": "fast"})
+    worker.step()
+    assert client.post("/v1/stems/lookup", json={"songs": [LOOKUP_SONG], "quality": "best"}).json()[0]["ready"] is False
+    assert client.post("/v1/stems/lookup", json={"songs": [LOOKUP_SONG], "quality": "both"}).json()[0]["ready"] is True
+    assert client.post("/v1/stems/lookup", json={"songs": [LOOKUP_SONG]}).json()[0]["ready"] is True
+
+
+def test_health_reports_the_choices_and_the_better_model(env):
+    client, _, _ = env
+    body = client.get("/v1/health").json()
+    assert body["qualityChoices"] is True and body["paused"] is False
+    assert body["configuredBestModel"] == "melband_kim" and body["bestStatus"] == "measured"
+
+
+def test_an_unknown_quality_is_rejected(env):
+    client, _, _ = env
+    assert client.post("/v1/jobs", json={**SONG, "priority": "now", "quality": "ultra"}).status_code == 422
+
+
+def test_pause_holds_work_and_resume_releases_it(env):
+    client, worker, _ = env
+    assert client.post("/v1/queue/pause").json() == {"paused": True}
+    created = client.post("/v1/jobs", json={**SONG, "priority": "now"}).json()
+    assert worker.step() is False
+    status = client.get(f"/v1/jobs/{created['jobId']}").json()
+    assert status["state"] == "queued" and status["helperPaused"] is True
+    assert client.get("/v1/queue").json()["paused"] is True and client.get("/v1/health").json()["paused"] is True
+    assert client.post("/v1/queue/resume").json() == {"paused": False}
+    assert worker.step() is True
+    assert client.get(f"/v1/jobs/{created['jobId']}").json()["helperPaused"] is False
+
+
+def test_pause_resume_and_cancel_require_the_key(env):
+    client, _, _ = env
+    anonymous = TestClient(client.app)
+    assert anonymous.post("/v1/queue/pause").status_code == 401
+    assert anonymous.post("/v1/queue/resume").status_code == 401
+    assert anonymous.post("/v1/jobs/whatever/cancel").status_code == 401
+
+
+def test_cancel_stops_the_song_and_its_better_copy(env):
+    client, _, _ = env
+    created = client.post("/v1/jobs", json={**SONG, "priority": "now", "quality": "both"}).json()
+    assert client.post(f"/v1/jobs/{created['jobId']}/cancel").json() == {"cancelled": 2}
+    assert client.get(f"/v1/jobs/{created['jobId']}").json()["state"] == "cancelled"
+    assert queued(client) == []
+    assert client.post("/v1/jobs/nope/cancel").status_code == 404
+    again = client.post("/v1/jobs", json={**SONG, "priority": "now"}).json()
+    assert again["state"] == "queued" and again["jobId"] != created["jobId"]
