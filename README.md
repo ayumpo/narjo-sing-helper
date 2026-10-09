@@ -293,9 +293,9 @@ needs no key, but shows nothing sensitive until a key is entered in the browser.
   request `{songs: [...], quality?}`, each entry shaped like a `POST /v1/jobs` request minus `priority`
   (1–200 songs, else 422); response is a list in request order of
   `{clientSongId, ready, quality}`. `ready` is true only when the song matches a library file
-  and stems already exist for it; `quality` (`fast`, `best`, or `null`) is the tier of those
-  stems, `null` when `ready` is false.
-  With `quality: "best"`, `ready` is true only for `best` stems.
+  and stems that the requested `quality` accepts already exist for it: with `quality: "best"`,
+  only `best` stems count. The response's `quality` (`fast`, `best`, or `null`) is the tier of
+  the stems the helper has, `null` when it has none.
 - `GET /v1/jobs/{jobId}` — `{state, progress, etaSeconds?, error?, quality, upgradePending, helperPaused}`.
   `progress` is 0…1. `quality` (`fast` or `best`) is the tier of the stems currently available.
   `upgradePending` is true while a best-tier upgrade for this song is queued or running.
