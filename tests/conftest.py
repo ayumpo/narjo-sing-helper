@@ -40,11 +40,15 @@ class FakeRun:
     def __init__(self, source, polls_needed: int, fail: str | None, on_poll, poll_fail_after: int | None = None):
         self.source = source
         self.polls = 0
+        self.work = 0
         self.polls_needed = polls_needed
         self.fail = fail
         self.on_poll = on_poll
         self.poll_fail_after = poll_fail_after
         self.cancelled = False
+        self.suspended = False
+        self.suspends = 0
+        self.resumes = 0
 
     def poll(self) -> bool:
         self.polls += 1
@@ -52,12 +56,22 @@ class FakeRun:
             raise RuntimeError("poll blew up")
         if self.on_poll:
             self.on_poll(self.polls)
-        return self.polls >= self.polls_needed
+        if not self.suspended:
+            self.work += 1
+        return self.work >= self.polls_needed
 
     def result(self):
         if self.fail:
             raise RuntimeError(self.fail)
         return (self.source * 0.25).astype(np.float32)
+
+    def suspend(self) -> None:
+        self.suspended = True
+        self.suspends += 1
+
+    def resume(self) -> None:
+        self.suspended = False
+        self.resumes += 1
 
     def cancel(self) -> None:
         self.cancelled = True

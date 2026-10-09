@@ -8,9 +8,9 @@ from datetime import datetime
 from .audio import SAMPLE_RATE, decode
 from .cache import effective_budget, evict
 from .config import Settings
-from .jobs import JobStore
+from .jobs import Job, JobStore
 from .library.index import LibraryIndex
-from .quality import queued_model
+from .quality import best_status, copy_label, queued_model, upgrade_wanted
 from .status import HelperStatus
 from .stems import song_key, write_stem_pair
 from .tiers import within_hours
@@ -30,9 +30,12 @@ class Worker:
         self._now = now
         self._clock = clock
 
+    def _best_usable(self) -> bool:
+        return best_status(self.status.timings.get(self.settings.best_model)) != "unavailable"
+
     def step(self) -> bool:
         plan = self.status.plan
-        if plan is None:
+        if plan is None or self.store.paused():
             return False
         job = self.store.next_runnable(allow_background=within_hours(self.settings.best_hours, self._now()))
         if job is None:
@@ -45,7 +48,8 @@ class Worker:
         if file.duration > max_seconds:
             self.store.fail(job.id, f"Longer than SING_MAX_MINUTES ({self.settings.max_minutes:g} min)")
             return True
-        self.store.mark_running(job.id)
+        if not self.store.mark_running(job.id):
+            return True  # cancelled between being picked and starting
         run = None
         try:
             try:
@@ -56,23 +60,15 @@ class Worker:
                 return True
             expected = self.status.expected_seconds(job.model, source.shape[1] / SAMPLE_RATE)
             run = self.runner.start(job.model, source, background=job.background)
-            started = self._clock()
-            while not run.poll():
-                if job.background and self.store.has_urgent_queued():
-                    run.cancel()
-                    self.store.requeue(job.id)
-                    log.info("Paused %s for an urgent request", job.rel_path)
-                    return True
-                elapsed = self._clock() - started
-                self.store.update_progress(job.id, min(0.95, elapsed / expected), max(0.0, expected - elapsed))
-                self._sleep(1.0)
+            if not self._wait(job, run, expected):
+                return True
             try:
                 vocals = run.result()
             except Exception as exc:
                 self.store.fail(job.id, str(exc)[:500])
                 log.exception("Separation failed for %s (job %s)", job.rel_path, job.id)
                 return True
-            quality = "best" if job.model == plan.best_model else "fast"
+            quality = copy_label(job.model, self.settings)
             try:
                 write_stem_pair(self.settings.stems_dir, job.key, source, vocals, rel_path=job.rel_path,
                                 model=job.model, quality=quality)
@@ -94,12 +90,47 @@ class Worker:
         # The stems are published and the job is done; a failure below must not turn it into "failed".
         try:
             self.store.touch(job.key)
-            if plan.upgrade and quality == "fast":
+            # Automatic queues the better copy after the fast one; Both queued it with the request.
+            if quality == "fast" and job.requested_quality == "auto" and upgrade_wanted("auto", plan,
+                                                                                         self._best_usable()):
                 self.store.submit(job.key, job.rel_path, job.duration, "upgrade", plan.best_model, background=True)
         except Exception:
             log.exception("Bookkeeping after %s failed (job %s)", job.rel_path, job.id)
         self._evict()
         log.info("Separated %s with %s (%s)", job.rel_path, job.model, quality)
+        return True
+
+    def _wait(self, job: Job, run, expected: float) -> bool:
+        """Polls `run` until it finishes. False when it was cancelled or set aside for an urgent request. While
+        the helper is paused the run is frozen, and the paused time counts neither as progress nor toward the ETA."""
+        started = self._clock()
+        paused_for = 0.0
+        paused_at = None
+        while not run.poll():
+            if self.store.is_cancelled(job.id):
+                run.cancel()
+                log.info("Cancelled %s", job.rel_path)
+                return False
+            if self.store.paused():
+                if paused_at is None:
+                    run.suspend()
+                    paused_at = self._clock()
+                    log.info("Paused %s", job.rel_path)
+                self._sleep(1.0)
+                continue
+            if paused_at is not None:
+                run.resume()
+                paused_for += self._clock() - paused_at
+                paused_at = None
+                log.info("Resumed %s", job.rel_path)
+            if job.background and self.store.has_urgent_queued():
+                run.cancel()
+                self.store.requeue(job.id)
+                log.info("Set %s aside for an urgent request", job.rel_path)
+                return False
+            elapsed = self._clock() - started - paused_for
+            self.store.update_progress(job.id, min(0.95, elapsed / expected), max(0.0, expected - elapsed))
+            self._sleep(1.0)
         return True
 
     def _evict(self) -> None:
@@ -111,10 +142,11 @@ class Worker:
 
     def run_forever(self, stop: threading.Event) -> None:
         self.store.recover()
-        # After recover, so a job a restart interrupted also moves off a model that is no longer configured.
-        if self.status.plan is not None:
-            plan = self.status.plan
-            if moved := self.store.retarget_queued(lambda job: queued_model(job, plan, self.settings, True)):
+        # After recover, so a job a restart interrupted also follows the configured models and the benchmark.
+        plan = self.status.plan
+        if plan is not None:
+            usable = self._best_usable()
+            if moved := self.store.retarget_queued(lambda job: queued_model(job, plan, self.settings, usable)):
                 log.info("Moved %d queued jobs to the configured models", moved)
         while not stop.is_set():
             try:

@@ -6,12 +6,13 @@ from conftest import FakeRunner, make_flac
 from narjo_sing.config import Settings
 from narjo_sing.jobs import JobStore
 from narjo_sing.library.index import LibraryIndex
-from narjo_sing.status import HelperStatus
+from narjo_sing.status import HelperStatus, ModelTiming
 from narjo_sing.stems import read_meta, song_key
 from narjo_sing.tiers import TierPlan
 from narjo_sing.worker import Worker
 
 TWO_TIER = TierPlan("two-tier", "htdemucs", "melband_kim", True, False)
+FAST_ONLY = TierPlan("fast-only", "htdemucs", None, False, True)
 
 
 @pytest.fixture
@@ -24,9 +25,12 @@ def setup(music, stems):
     key = song_key(file.rel_path, file.size, file.mtime_ns)
     settings = Settings.from_env({"SING_MUSIC_DIR": str(music), "SING_STEMS_DIR": str(stems)})
 
-    def worker(runner, plan=TWO_TIER, hours_now=clock_time(12, 0), **overrides):
+    def worker(runner, plan=TWO_TIER, hours_now=clock_time(12, 0), sleep=lambda _: None, clock=None, timings=None,
+               **overrides):
         s = Settings.from_env({"SING_MUSIC_DIR": str(music), "SING_STEMS_DIR": str(stems), **overrides})
-        return Worker(store, index, runner, s, HelperStatus(plan=plan), sleep=lambda _: None, now=lambda: hours_now)
+        status = HelperStatus(plan=plan, timings=dict(timings or {}))
+        extra = {"clock": clock} if clock else {}
+        return Worker(store, index, runner, s, status, sleep=sleep, now=lambda: hours_now, **extra)
 
     return store, file, key, settings, worker
 
@@ -184,4 +188,137 @@ def test_a_job_interrupted_by_a_restart_moves_to_the_configured_model(setup):
     stop = threading.Event()
     stop.set()
     worker(FakeRunner()).run_forever(stop)
+    assert (store.get(job.id).state, store.get(job.id).model) == ("queued", "melband_kim")
+
+
+def test_a_paused_helper_starts_nothing(setup):
+    store, file, key, _, worker = setup
+    job = store.submit(key, file.rel_path, file.duration, "now", "htdemucs", False)
+    store.set_paused(True)
+    runner = FakeRunner()
+    assert worker(runner).step() is False
+    assert store.get(job.id).state == "queued" and runner.started == []
+    store.set_paused(False)
+    assert worker(runner).step() is True and store.get(job.id).state == "done"
+
+
+def test_pause_freezes_the_running_song_and_resume_continues_it(setup):
+    store, file, key, _, worker = setup
+    job = store.submit(key, file.rel_path, file.duration, "now", "htdemucs", False)
+    sleeps = []
+
+    def on_poll(polls):
+        if polls == 2:
+            store.set_paused(True)
+
+    def sleep(_):
+        sleeps.append(1)
+        if len(sleeps) == 5:
+            store.set_paused(False)
+
+    runner = FakeRunner(polls_needed=4, on_poll=on_poll)
+    assert worker(runner, sleep=sleep).step() is True
+    run = runner.started[0][2]
+    assert (run.suspends, run.resumes, run.cancelled) == (1, 1, False)
+    assert store.get(job.id).state == "done"
+
+
+def test_paused_time_does_not_count_as_progress(setup):
+    store, file, key, _, worker = setup
+    store.submit(key, file.rel_path, file.duration, "now", "htdemucs", False)
+    clock = [0.0]
+    sleeps = []
+    progress = []
+
+    def on_poll(polls):
+        if polls == 2:
+            store.set_paused(True)
+
+    def sleep(_):
+        clock[0] += 10.0
+        sleeps.append(1)
+        if len(sleeps) == 4:
+            store.set_paused(False)
+
+    record = store.update_progress
+    store.update_progress = lambda job_id, value, eta: (progress.append(value), record(job_id, value, eta))
+    timings = {"htdemucs": ModelTiming("htdemucs", 50.0, 0.0)}  # 50 s per second of audio: 100 s for this song
+    runner = FakeRunner(polls_needed=4, on_poll=on_poll)
+    assert worker(runner, sleep=sleep, clock=lambda: clock[0], timings=timings).step() is True
+    # Paused from t=10 to t=40; the polls at t=0, 40 and 50 count 0, 10 and 20 seconds of work.
+    assert [round(value, 2) for value in progress] == [0.0, 0.1, 0.2]
+
+
+def test_cancelling_a_queued_song_means_it_never_runs(setup):
+    store, file, key, _, worker = setup
+    job = store.submit(key, file.rel_path, file.duration, "now", "htdemucs", False)
+    assert store.cancel_song(job.id) == 1
+    runner = FakeRunner()
+    assert worker(runner).step() is False
+    assert store.get(job.id).state == "cancelled" and runner.started == []
+
+
+def test_cancel_stops_the_running_song_and_keeps_no_copy(setup, stems):
+    store, file, key, _, worker = setup
+    job = store.submit(key, file.rel_path, file.duration, "now", "htdemucs", False)
+    runner = FakeRunner(polls_needed=5, on_poll=lambda polls: polls == 2 and store.cancel_song(job.id))
+    assert worker(runner).step() is True
+    assert runner.started[0][2].cancelled is True
+    assert store.get(job.id).state == "cancelled" and read_meta(stems, key) is None
+
+
+def test_cancel_while_paused_ends_the_frozen_song(setup):
+    store, file, key, _, worker = setup
+    job = store.submit(key, file.rel_path, file.duration, "now", "htdemucs", False)
+
+    def on_poll(polls):
+        if polls == 2:
+            store.set_paused(True)
+        if polls == 3:
+            store.cancel_song(job.id)
+
+    runner = FakeRunner(polls_needed=5, on_poll=on_poll)
+    assert worker(runner).step() is True
+    run = runner.started[0][2]
+    assert run.suspends == 1 and run.cancelled is True
+    assert store.get(job.id).state == "cancelled"
+
+
+def test_a_cancel_that_arrives_once_the_result_exists_keeps_the_copy(setup, stems, monkeypatch):
+    import narjo_sing.worker as worker_module
+    store, file, key, _, worker = setup
+    job = store.submit(key, file.rel_path, file.duration, "now", "htdemucs", False)
+    real_write = worker_module.write_stem_pair
+
+    def write_then_cancel(*args, **kwargs):
+        store.cancel_song(job.id)
+        return real_write(*args, **kwargs)
+
+    monkeypatch.setattr(worker_module, "write_stem_pair", write_then_cancel)
+    assert worker(FakeRunner()).step() is True
+    assert store.get(job.id).state == "done" and read_meta(stems, key) is not None
+
+
+def test_an_explicit_best_copy_is_labelled_best_on_a_fast_only_server(setup, stems):
+    store, file, key, _, worker = setup
+    store.submit(key, file.rel_path, file.duration, "now", "melband_kim", False, requested_quality="best")
+    assert worker(FakeRunner(), plan=FAST_ONLY).step() is True
+    assert read_meta(stems, key).quality == "best"
+    assert store.upgrade_pending(key) is False
+
+
+def test_only_automatic_jobs_queue_the_better_copy_afterwards(setup):
+    store, file, key, _, worker = setup
+    store.submit(key, file.rel_path, file.duration, "now", "htdemucs", False, requested_quality="fast")
+    assert worker(FakeRunner()).step() is True
+    assert store.upgrade_pending(key) is False
+
+
+def test_a_requested_upgrade_survives_a_restart_on_a_fast_only_server(setup):
+    import threading
+    store, file, key, _, worker = setup
+    job = store.submit(key, file.rel_path, file.duration, "upgrade", "melband_kim", True, requested_quality="both")
+    stop = threading.Event()
+    stop.set()
+    worker(FakeRunner(), plan=FAST_ONLY).run_forever(stop)
     assert (store.get(job.id).state, store.get(job.id).model) == ("queued", "melband_kim")
