@@ -101,7 +101,8 @@ docker compose up -d --build
 
 ## Fast, Best or both
 
-In Narjo, **Settings → Integrations → Sing → Quality** chooses how songs are prepared on that phone:
+When your Narjo app includes these settings (coming in an update), **Settings → Integrations → Sing → Quality**
+chooses how songs are prepared on that phone:
 
 - **Automatic** (the default): the helper decides from its own speed. A fast computer makes the better
   version straight away, a medium one makes the fast version first and the better one later, and a slow
@@ -118,8 +119,9 @@ Narjo shows how long each choice takes on your helper. People who share one help
   carries on when you press **Resume**. Nothing new starts while it's paused, and it stays paused after a restart.
 - **Cancel** stops one song for good. It isn't prepared again until someone asks for it.
 
-You can do both in Narjo (**Settings → Integrations → Sing → Helper Queue**, or the message above the
-microphone while a song is being prepared) or on the helper's own page at `http://YOUR-SERVER-IP:8765`.
+You can do both on the helper's own page at `http://YOUR-SERVER-IP:8765`. Once your Narjo app includes these
+controls (coming in an update), you can also do them in Narjo (**Settings → Integrations → Sing → Helper
+Queue**, or the message above the microphone while a song is being prepared).
 
 ## Check that it's working
 
@@ -272,7 +274,7 @@ needs no key, but shows nothing sensitive until a key is entered in the browser.
   `state` is `benchmarking`, `ready` or `error`; `error` is set only in the `error` state.
   `mode` is `single`, `two-tier` or `fast-only` once benchmarking has finished. `qualityChoices` is `true`
   on helpers that accept `quality`. `bestStatus` is `pending`, `measured`, `tooSlow` (slower than 30× real
-  time) or `unavailable` (the better model failed to install).
+  time) or `unavailable` (the better model's speed test failed, for example because it couldn't be downloaded).
 - `GET /v1/queue` — snapshot for the status page:
   `{paused, jobs: [{id, relPath, model, priority, state, progress, etaSeconds, created, updated,
   requestedQuality, quality}], recent: [{relPath, quality, model, finished}]}`. `jobs` lists queued and

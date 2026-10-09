@@ -90,7 +90,7 @@ _PAGE = """<!doctype html>
     <div class="row"><span>Fast version</span><span id="s-fast"></span></div>
     <div class="row"><span>Better version</span><span id="s-best"></span></div>
     <div class="row"><span>Songs in your library</span><span id="s-library"></span></div>
-    <div class="row"><span>Songs waiting</span><span id="s-queue"></span></div>
+    <div class="row"><span>Songs waiting or in progress</span><span id="s-queue"></span></div>
   </div>
 
   <div id="queue-card" class="card hidden">
@@ -206,7 +206,7 @@ _PAGE = """<!doctype html>
       return name + " · " + perSong(health.bestSecondsPerMinute);
     }
     if (health.bestStatus === "tooSlow") return name + " · too slow on this computer (over 2 hours a song)";
-    if (health.bestStatus === "unavailable") return name + " · not available (it failed to install)";
+    if (health.bestStatus === "unavailable") return name + " · not available on this computer (its speed test failed)";
     if (health.bestStatus === "pending") return name + " · measuring…";
     return name;
   }
@@ -330,7 +330,8 @@ _PAGE = """<!doctype html>
       if (!result) return;
       authError.classList.add("hidden");
       lastResult = result;
-      render(result.health, result.queue);
+      // Rebuilding the queue rows under an open Yes/No confirmation can drop the click it's about to receive.
+      if (confirmingJob === null) render(result.health, result.queue);
     }).catch(function () { /* a transient network error leaves the last good render in place */ });
   }
 
