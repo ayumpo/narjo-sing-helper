@@ -353,6 +353,10 @@ def test_index_page_has_pause_and_cancel_without_browser_dialogs(env):
     assert "/v1/queue/pause" in body and "/v1/queue/resume" in body and "/cancel" in body
     assert "confirm(" not in body and "alert(" not in body
     assert "Fast version first, better version later" in body
+    # An open "Cancel this song?" confirmation must not survive a 401, nor leave Pause/Resume's label stale.
+    assert re.search(r"healthResp\.status === 401\) \{[^}]*confirmingJob = null;", body)
+    assert re.search(r"queueResp\.status === 401\) \{[^}]*confirmingJob = null;", body)
+    assert re.search(r'pauseBtn\.addEventListener\("click", function \(\) \{\s*confirmingJob = null;', body)
 
 
 def test_index_page_script_is_valid_javascript(env, tmp_path):

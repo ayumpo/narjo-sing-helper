@@ -319,10 +319,10 @@ _PAGE = """<!doctype html>
     if (!key) return Promise.resolve();
     var headers = { "X-Narjo-Sing-Key": key };
     return fetch("/v1/health", { headers: headers }).then(function (healthResp) {
-      if (healthResp.status === 401) { authError.classList.remove("hidden"); hideCards(); return null; }
+      if (healthResp.status === 401) { confirmingJob = null; authError.classList.remove("hidden"); hideCards(); return null; }
       return healthResp.json().then(function (health) {
         return fetch("/v1/queue", { headers: headers }).then(function (queueResp) {
-          if (queueResp.status === 401) { authError.classList.remove("hidden"); hideCards(); return null; }
+          if (queueResp.status === 401) { confirmingJob = null; authError.classList.remove("hidden"); hideCards(); return null; }
           return queueResp.json().then(function (queue) { return { health: health, queue: queue }; });
         });
       });
@@ -344,6 +344,7 @@ _PAGE = """<!doctype html>
   }
 
   pauseBtn.addEventListener("click", function () {
+    confirmingJob = null;
     var paused = !!(lastResult && lastResult.queue.paused);
     pauseBtn.disabled = true;
     post(paused ? "/v1/queue/resume" : "/v1/queue/pause").then(poll, poll).then(function () {
