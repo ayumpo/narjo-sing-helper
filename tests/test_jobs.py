@@ -1,6 +1,11 @@
 import pytest
+import sqlite3
 
+from narjo_sing.config import Settings
 from narjo_sing.jobs import JobStore
+from narjo_sing.quality import queued_model
+
+SETTINGS = Settings.from_env({})
 
 
 @pytest.fixture
@@ -99,7 +104,7 @@ def test_queued_jobs_follow_the_configured_models(store):
     duplicate = store.submit("d", "d", 1, "upgrade", "retired_model", True)
     running = store.submit("e", "e", 1, "upgrade", "retired_model", True)
     store.mark_running(running.id)
-    assert store.retarget_queued(plan) == 3
+    assert store.retarget_queued(lambda job: queued_model(job, plan, SETTINGS, True)) == 3
     assert store.get(old_upgrade.id).model == "melband_kim"
     assert store.get(old_batch.id).model == "melband_kim"
     assert store.get(current.id).model == "htdemucs"
@@ -112,6 +117,81 @@ def test_queued_upgrades_are_dropped_when_upgrades_are_off(store):
     plan = TierPlan("fast-only", "htdemucs", None, False, True)
     upgrade = store.submit("a", "a", 1, "upgrade", "retired_model", True)
     batch = store.submit("b", "b", 1, "batch", "retired_model", True)
-    assert store.retarget_queued(plan) == 2
+    requested = store.submit("c", "c", 1, "upgrade", "melband_kim", True, requested_quality="both")
+    assert store.retarget_queued(lambda job: queued_model(job, plan, SETTINGS, True)) == 2
     assert store.get(upgrade.id) is None
     assert store.get(batch.id).model == "htdemucs"
+    assert store.get(requested.id).model == "melband_kim"
+
+
+def test_jobs_remember_the_requested_quality_and_an_explicit_choice_wins_a_merge(store):
+    auto = store.submit("k", "x", 1, "upgrade", "melband_kim", True)
+    assert auto.requested_quality == "auto"
+    merged = store.submit("k", "x", 1, "upgrade", "melband_kim", True, requested_quality="both")
+    assert merged.id == auto.id and merged.requested_quality == "both"
+    again = store.submit("k", "x", 1, "upgrade", "melband_kim", True)
+    assert again.requested_quality == "both"
+    assert store.record_done("d", "z", 5, "now", "htdemucs", requested_quality="fast").requested_quality == "fast"
+
+
+def test_cancel_song_stops_every_job_of_that_song(store):
+    fast = store.submit("k", "x", 1, "now", "htdemucs", False, requested_quality="both")
+    upgrade = store.submit("k", "x", 1, "upgrade", "melband_kim", True, requested_quality="both")
+    other = store.submit("o", "y", 1, "next", "htdemucs", False)
+    store.mark_running(fast.id)
+    assert store.cancel_song(upgrade.id) == 2
+    assert (store.get(fast.id).state, store.get(upgrade.id).state) == ("cancelled", "cancelled")
+    assert store.get(other.id).state == "queued"
+    assert store.is_cancelled(fast.id) and not store.is_cancelled(other.id)
+    assert store.cancel_song("unknown") is None
+    assert store.queue_length() == 1 and not store.upgrade_pending("k")
+
+
+def test_a_cancelled_job_cannot_start_be_set_aside_or_fail(store):
+    queued = store.submit("k", "x", 1, "now", "htdemucs", False)
+    store.cancel_song(queued.id)
+    assert store.mark_running(queued.id) is False
+    running = store.submit("r", "y", 1, "upgrade", "melband_kim", True)
+    store.mark_running(running.id)
+    store.cancel_song(running.id)
+    store.requeue(running.id)
+    store.fail(running.id, "late failure")
+    assert store.get(running.id).state == "cancelled" and store.get(running.id).error is None
+    assert store.next_runnable(allow_background=True) is None
+
+
+def test_a_new_request_after_a_cancel_creates_a_new_job(store):
+    first = store.submit("k", "x", 1, "now", "htdemucs", False)
+    store.cancel_song(first.id)
+    second = store.submit("k", "x", 1, "now", "htdemucs", False)
+    assert second.id != first.id and second.state == "queued"
+
+
+def test_a_finished_job_cannot_be_cancelled(store):
+    job = store.submit("k", "x", 1, "now", "htdemucs", False)
+    store.mark_running(job.id)
+    store.finish(job.id)
+    assert store.cancel_song(job.id) == 0 and store.get(job.id).state == "done"
+
+
+def test_pause_is_remembered_across_restarts(tmp_path):
+    first = JobStore(tmp_path / "jobs.sqlite")
+    assert first.paused() is False
+    first.set_paused(True)
+    assert JobStore(tmp_path / "jobs.sqlite").paused() is True
+    first.set_paused(False)
+    assert JobStore(tmp_path / "jobs.sqlite").paused() is False
+
+
+def test_an_older_database_gains_the_requested_quality_column(tmp_path):
+    path = tmp_path / "jobs.sqlite"
+    db = sqlite3.connect(path)
+    db.execute("CREATE TABLE jobs (id TEXT PRIMARY KEY, key TEXT NOT NULL, rel_path TEXT NOT NULL, duration REAL NOT NULL, "
+               "priority INTEGER NOT NULL, model TEXT NOT NULL, background INTEGER NOT NULL, state TEXT NOT NULL, "
+               "progress REAL NOT NULL DEFAULT 0, eta REAL, error TEXT, created REAL NOT NULL, updated REAL NOT NULL)")
+    db.execute("INSERT INTO jobs VALUES ('old', 'k', 'x', 1, 0, 'htdemucs', 0, 'queued', 0, NULL, NULL, 1, 1)")
+    db.commit()
+    db.close()
+    store = JobStore(path)
+    assert store.get("old").requested_quality == "auto"
+    assert store.submit("n", "y", 1, "now", "htdemucs", False, requested_quality="best").requested_quality == "best"

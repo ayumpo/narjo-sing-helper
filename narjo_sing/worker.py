@@ -10,6 +10,7 @@ from .cache import effective_budget, evict
 from .config import Settings
 from .jobs import JobStore
 from .library.index import LibraryIndex
+from .quality import queued_model
 from .status import HelperStatus
 from .stems import song_key, write_stem_pair
 from .tiers import within_hours
@@ -111,8 +112,10 @@ class Worker:
     def run_forever(self, stop: threading.Event) -> None:
         self.store.recover()
         # After recover, so a job a restart interrupted also moves off a model that is no longer configured.
-        if self.status.plan is not None and (moved := self.store.retarget_queued(self.status.plan)):
-            log.info("Moved %d queued jobs to the configured models", moved)
+        if self.status.plan is not None:
+            plan = self.status.plan
+            if moved := self.store.retarget_queued(lambda job: queued_model(job, plan, self.settings, True)):
+                log.info("Moved %d queued jobs to the configured models", moved)
         while not stop.is_set():
             try:
                 worked = self.step()

@@ -4,6 +4,7 @@ import sqlite3
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -11,16 +12,19 @@ PRIORITY = {"now": 0, "next": 1, "batch": 2, "upgrade": 3}
 PRIORITY_NAME = {value: name for name, value in PRIORITY.items()}
 URGENT_MAX = PRIORITY["next"]
 
-COLUMNS = "id, key, rel_path, duration, priority, model, background, state, progress, eta, error, created, updated"
+COLUMNS = ("id, key, rel_path, duration, priority, model, background, state, progress, eta, error, created, updated, "
+           "requested_quality")
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
     id TEXT PRIMARY KEY, key TEXT NOT NULL, rel_path TEXT NOT NULL, duration REAL NOT NULL,
     priority INTEGER NOT NULL, model TEXT NOT NULL, background INTEGER NOT NULL, state TEXT NOT NULL,
-    progress REAL NOT NULL DEFAULT 0, eta REAL, error TEXT, created REAL NOT NULL, updated REAL NOT NULL
+    progress REAL NOT NULL DEFAULT 0, eta REAL, error TEXT, created REAL NOT NULL, updated REAL NOT NULL,
+    requested_quality TEXT NOT NULL DEFAULT 'auto'
 );
 CREATE INDEX IF NOT EXISTS jobs_key_state ON jobs(key, state);
 CREATE INDEX IF NOT EXISTS jobs_queue ON jobs(state, priority, created);
 CREATE TABLE IF NOT EXISTS stem_usage (key TEXT PRIMARY KEY, last_used REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS helper_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 """
 
 
@@ -39,6 +43,7 @@ class Job:
     error: str | None
     created: float
     updated: float
+    requested_quality: str
 
 
 @dataclass(frozen=True)
@@ -56,45 +61,55 @@ class JobStore:
         self._db = sqlite3.connect(db_path, check_same_thread=False)
         with self._lock:
             self._db.executescript(SCHEMA)
+            # Databases made before quality choices lack the column; their jobs were all Automatic.
+            if "requested_quality" not in {row[1] for row in self._db.execute("PRAGMA table_info(jobs)")}:
+                self._db.execute("ALTER TABLE jobs ADD COLUMN requested_quality TEXT NOT NULL DEFAULT 'auto'")
+                self._db.commit()
 
     @staticmethod
     def _job(row) -> Job:
         (job_id, key, rel, duration, priority, model, background, state, progress, eta, error, created,
-         updated) = row
+         updated, requested_quality) = row
         return Job(job_id, key, rel, duration, PRIORITY_NAME[priority], model, bool(background), state,
-                   progress, eta, error, created, updated)
+                   progress, eta, error, created, updated, requested_quality)
 
     def _one(self, where: str, args: tuple) -> Job | None:
         row = self._db.execute(f"SELECT {COLUMNS} FROM jobs WHERE {where}", args).fetchone()
         return self._job(row) if row else None
 
-    def _set(self, job_id: str, assignments: str, args: tuple) -> None:
+    def _set(self, job_id: str, assignments: str, args: tuple, only_if: str | None = None) -> bool:
+        guard = f" AND {only_if}" if only_if else ""
         with self._lock:
-            self._db.execute(f"UPDATE jobs SET {assignments}, updated = ? WHERE id = ?", args + (self._clock(), job_id))
+            cursor = self._db.execute(f"UPDATE jobs SET {assignments}, updated = ? WHERE id = ?{guard}",
+                                      args + (self._clock(), job_id))
             self._db.commit()
+            return cursor.rowcount > 0
 
-    def submit(self, key: str, rel_path: str, duration: float, priority: str, model: str, background: bool) -> Job:
+    def submit(self, key: str, rel_path: str, duration: float, priority: str, model: str, background: bool,
+               requested_quality: str = "auto") -> Job:
         rank = PRIORITY[priority]
         now = self._clock()
         with self._lock:
             existing = self._one("key = ? AND model = ? AND state IN ('queued','running') ORDER BY priority LIMIT 1",
                                  (key, model))
             if existing is not None:
+                existing_id = existing.id
+                if requested_quality != "auto" and existing.requested_quality == "auto":
+                    # A listener's explicit choice outlives Automatic's rules in `retarget_queued`.
+                    self._db.execute("UPDATE jobs SET requested_quality = ? WHERE id = ?",
+                                     (requested_quality, existing_id))
                 if rank < PRIORITY[existing.priority]:
                     self._db.execute("UPDATE jobs SET priority = ?, background = ?, updated = ? WHERE id = ?",
-                                     (rank, int(background), now, existing.id))
-                    existing_id = existing.id
+                                     (rank, int(background), now, existing_id))
                     self._demote_other_now_jobs(rank, existing_id, now)
-                    self._db.commit()
-                    existing = self._one("id = ?", (existing_id,))
                 elif rank == PRIORITY["now"]:
-                    self._demote_other_now_jobs(rank, existing.id, now)
-                    self._db.commit()
-                return existing
+                    self._demote_other_now_jobs(rank, existing_id, now)
+                self._db.commit()
+                return self._one("id = ?", (existing_id,))
             job_id = uuid.uuid4().hex
-            self._db.execute(f"INSERT INTO jobs ({COLUMNS}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            self._db.execute(f"INSERT INTO jobs ({COLUMNS}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                              (job_id, key, rel_path, duration, rank, model, int(background), "queued", 0.0, None,
-                              None, now, now))
+                              None, now, now, requested_quality))
             self._demote_other_now_jobs(rank, job_id, now)
             self._db.commit()
             return self._one("id = ?", (job_id,))
@@ -106,13 +121,14 @@ class JobStore:
         self._db.execute("UPDATE jobs SET priority = ?, updated = ? WHERE state = 'queued' AND priority = ? AND id != ?",
                          (PRIORITY["next"], now, PRIORITY["now"], job_id))
 
-    def record_done(self, key: str, rel_path: str, duration: float, priority: str, model: str) -> Job:
+    def record_done(self, key: str, rel_path: str, duration: float, priority: str, model: str,
+                    requested_quality: str = "auto") -> Job:
         now = self._clock()
         job_id = uuid.uuid4().hex
         with self._lock:
-            self._db.execute(f"INSERT INTO jobs ({COLUMNS}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            self._db.execute(f"INSERT INTO jobs ({COLUMNS}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                              (job_id, key, rel_path, duration, PRIORITY[priority], model, 0, "done", 1.0, 0.0, None,
-                              now, now))
+                              now, now, requested_quality))
             self._db.commit()
             return self._one("id = ?", (job_id,))
 
@@ -126,34 +142,64 @@ class JobStore:
             return self._db.execute("SELECT 1 FROM jobs WHERE state = 'queued' AND priority <= ? LIMIT 1",
                                     (URGENT_MAX,)).fetchone() is not None
 
-    def mark_running(self, job_id: str) -> None:
-        self._set(job_id, "state = 'running', progress = 0", ())
+    def mark_running(self, job_id: str) -> bool:
+        """False when the job was cancelled after the worker picked it."""
+        return self._set(job_id, "state = 'running', progress = 0", (), only_if="state = 'queued'")
 
     def update_progress(self, job_id: str, progress: float, eta: float) -> None:
-        self._set(job_id, "progress = ?, eta = ?", (progress, eta))
+        self._set(job_id, "progress = ?, eta = ?", (progress, eta), only_if="state = 'running'")
 
     def finish(self, job_id: str) -> None:
         self._set(job_id, "state = 'done', progress = 1, eta = 0", ())
 
     def fail(self, job_id: str, error: str) -> None:
-        self._set(job_id, "state = 'failed', error = ?", (error,))
+        self._set(job_id, "state = 'failed', error = ?", (error,), only_if="state IN ('queued','running')")
 
     def requeue(self, job_id: str) -> None:
-        self._set(job_id, "state = 'queued', progress = 0, eta = NULL", ())
+        self._set(job_id, "state = 'queued', progress = 0, eta = NULL", (), only_if="state = 'running'")
 
-    def retarget_queued(self, plan) -> int:
-        """Points queued jobs at the models `plan` uses now, after a model setting changed. Upgrades are dropped
-        when the plan has none, and a job that would duplicate one already queued or running is dropped. Returns
-        how many jobs changed."""
+    def cancel_song(self, job_id: str) -> int | None:
+        """Cancels every queued or running job for `job_id`'s song, each model and the upgrade too. Returns how many
+        jobs it cancelled, or None when the id is unknown."""
+        with self._lock:
+            job = self._one("id = ?", (job_id,))
+            if job is None:
+                return None
+            cursor = self._db.execute(
+                "UPDATE jobs SET state = 'cancelled', updated = ? WHERE key = ? AND state IN ('queued','running')",
+                (self._clock(), job.key))
+            self._db.commit()
+            return cursor.rowcount
+
+    def is_cancelled(self, job_id: str) -> bool:
+        with self._lock:
+            row = self._db.execute("SELECT state FROM jobs WHERE id = ?", (job_id,)).fetchone()
+            return row is not None and row[0] == "cancelled"
+
+    def set_paused(self, paused: bool) -> None:
+        with self._lock:
+            self._db.execute("INSERT OR REPLACE INTO helper_state (key, value) VALUES ('paused', ?)",
+                             ("1" if paused else "0",))
+            self._db.commit()
+
+    def paused(self) -> bool:
+        with self._lock:
+            row = self._db.execute("SELECT value FROM helper_state WHERE key = 'paused'").fetchone()
+            return row is not None and row[0] == "1"
+
+    def retarget_queued(self, choose: Callable[[Job], str | None]) -> int:
+        """Points each queued job at `choose(job)`, the model it should use after a model setting or the benchmark
+        changed. None drops the job, and so does a change that would duplicate a job already queued or running.
+        Returns how many jobs changed."""
         changed = 0
         with self._lock:
             rows = self._db.execute(f"SELECT {COLUMNS} FROM jobs WHERE state = 'queued' ORDER BY created").fetchall()
             for job in map(self._job, rows):
-                if job.priority == "upgrade" and not plan.upgrade:
+                model = choose(job)
+                if model is None:
                     self._db.execute("DELETE FROM jobs WHERE id = ?", (job.id,))
                     changed += 1
                     continue
-                model = plan.model_for(job.priority)
                 if model == job.model:
                     continue
                 twin = self._db.execute(
