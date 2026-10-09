@@ -49,11 +49,11 @@ def copy_answers(copy_quality: str, quality: str, priority: str, plan: TierPlan 
 
 def queued_model(job, plan: TierPlan, settings: Settings, best_usable: bool) -> str | None:
     """The model a queued job should use after a model setting or the benchmark changed; None drops the job.
-    An explicit choice keeps its already-queued model (falling back to fast once best turns unusable); only
-    Automatic jobs, and explicit jobs on a now-unconfigured model, still follow `model_for`."""
+    Both keeps its already-queued model (falling back to fast once best turns unusable); every other job,
+    including Best, is recomputed from `model_for` so it tracks a benchmark that becomes usable again."""
     if job.priority == "upgrade" and not upgrade_wanted(job.requested_quality, plan, best_usable):
         return None
-    if job.requested_quality != "auto" and job.model in (settings.fast_model, settings.best_model):
+    if job.requested_quality == "both" and job.model in (settings.fast_model, settings.best_model):
         if job.model == settings.best_model and not best_usable:
             return settings.fast_model
         return job.model

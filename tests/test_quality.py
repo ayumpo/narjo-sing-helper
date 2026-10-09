@@ -72,10 +72,12 @@ def test_queued_jobs_keep_the_listeners_choice():
     assert queued_model(Queued("upgrade", "both", "melband_kim"), TWO_TIER, SETTINGS, False) is None
     assert queued_model(Queued("now", "best", "melband_kim"), FAST_ONLY, SETTINGS, True) == "melband_kim"
     assert queued_model(Queued("batch", "auto", "melband_kim"), TWO_TIER, SETTINGS, True) == "melband_kim"
-    # An explicit choice keeps the model it was queued with; it is never recomputed from the plan.
+    # Both keeps the model it was queued with; it is never recomputed from the plan.
     assert queued_model(Queued("batch", "both", "melband_kim"), TWO_TIER, SETTINGS, True) == "melband_kim"
     assert queued_model(Queued("now", "best", "melband_kim"), TWO_TIER, SETTINGS, False) == "htdemucs"
     assert queued_model(Queued("now", "best", "retired_model"), TWO_TIER, SETTINGS, True) == "melband_kim"
+    # Best, unlike Both, is recomputed: a restart where the better model works again moves it off fast.
+    assert queued_model(Queued("now", "best", "htdemucs"), TWO_TIER, SETTINGS, True) == "melband_kim"
 
 
 def test_best_usable_reads_the_configured_models_status():
