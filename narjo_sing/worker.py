@@ -10,7 +10,7 @@ from .cache import effective_budget, evict
 from .config import Settings
 from .jobs import Job, JobStore
 from .library.index import LibraryIndex
-from .quality import best_status, copy_label, queued_model, upgrade_wanted
+from .quality import best_usable, copy_label, queued_model, upgrade_wanted
 from .status import HelperStatus
 from .stems import song_key, write_stem_pair
 from .tiers import within_hours
@@ -31,7 +31,7 @@ class Worker:
         self._clock = clock
 
     def _best_usable(self) -> bool:
-        return best_status(self.status.timings.get(self.settings.best_model)) != "unavailable"
+        return best_usable(self.status.timings, self.settings)
 
     def step(self) -> bool:
         plan = self.status.plan

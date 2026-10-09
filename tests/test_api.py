@@ -265,6 +265,12 @@ def test_both_asks_for_fast_now_and_queues_the_better_copy_once(env):
     assert queued(client) == [("now", "htdemucs", "both"), ("upgrade", "melband_kim", "both")]
 
 
+def test_batch_both_queues_the_fast_copy_and_the_upgrade(env):
+    client, _, _ = env
+    client.post("/v1/jobs/batch", json={"songs": [SONG], "quality": "both"})
+    assert queued(client) == [("batch", "htdemucs", "both"), ("upgrade", "melband_kim", "both")]
+
+
 def test_both_queues_the_better_copy_even_on_a_fast_only_server(music, stems):
     client, _, _, _ = build_env(music, stems, plan=FAST_ONLY)
     client.post("/v1/jobs", json={**SONG, "priority": "now", "quality": "both"})

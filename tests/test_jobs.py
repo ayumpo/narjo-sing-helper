@@ -4,8 +4,10 @@ import sqlite3
 from narjo_sing.config import Settings
 from narjo_sing.jobs import JobStore
 from narjo_sing.quality import queued_model
+from narjo_sing.tiers import TierPlan
 
 SETTINGS = Settings.from_env({})
+TWO_TIER = TierPlan("two-tier", "htdemucs", "melband_kim", True, False)
 
 
 @pytest.fixture
@@ -47,8 +49,9 @@ def test_urgent_detection_requeue_and_recover(store):
     store.requeue(job.id)
     assert store.get(job.id).state == "queued"
     store.mark_running(job.id)
+    store.update_progress(job.id, 0.5, 30.0)
     assert store.recover() == 1
-    assert store.get(job.id).state == "queued"
+    assert store.get(job.id).state == "queued" and store.get(job.id).eta is None
 
 
 def test_progress_finish_fail(store):
@@ -132,6 +135,32 @@ def test_jobs_remember_the_requested_quality_and_an_explicit_choice_wins_a_merge
     again = store.submit("k", "x", 1, "upgrade", "melband_kim", True)
     assert again.requested_quality == "both"
     assert store.record_done("d", "z", 5, "now", "htdemucs", requested_quality="fast").requested_quality == "fast"
+
+
+def test_a_fast_merge_never_overrides_automatic_but_automatic_overrides_fast(store):
+    auto = store.submit("k", "x", 1, "now", "htdemucs", False)
+    merged = store.submit("k", "x", 1, "now", "htdemucs", False, requested_quality="fast")
+    assert merged.id == auto.id and merged.requested_quality == "auto"
+
+    fast = store.submit("j", "y", 1, "now", "htdemucs", False, requested_quality="fast")
+    promoted = store.submit("j", "y", 1, "now", "htdemucs", False)
+    assert promoted.id == fast.id and promoted.requested_quality == "auto"
+
+
+def test_an_automatic_batch_jobs_both_choice_survives_a_merge_and_a_restart(store):
+    auto = store.submit("k", "x", 1, "batch", "melband_kim", True)
+    merged = store.submit("k", "x", 1, "upgrade", "melband_kim", True, requested_quality="both")
+    assert merged.id == auto.id and merged.priority == "batch" and merged.requested_quality == "both"
+    store.retarget_queued(lambda job: queued_model(job, TWO_TIER, SETTINGS, True))
+    assert store.get(auto.id).model == "melband_kim"
+
+
+def test_a_both_upgrade_choice_survives_a_promotion_to_now_and_a_restart(store):
+    upgrade = store.submit("k", "x", 1, "upgrade", "melband_kim", True, requested_quality="both")
+    promoted = store.submit("k", "x", 1, "now", "melband_kim", False, requested_quality="best")
+    assert promoted.id == upgrade.id and promoted.priority == "now" and promoted.requested_quality == "both"
+    store.retarget_queued(lambda job: queued_model(job, TWO_TIER, SETTINGS, True))
+    assert store.get(upgrade.id).model == "melband_kim"
 
 
 def test_cancel_song_stops_every_job_of_that_song(store):

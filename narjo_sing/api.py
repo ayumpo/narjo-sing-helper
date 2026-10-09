@@ -12,7 +12,7 @@ from .config import Settings
 from .jobs import JobStore
 from .library.index import LibraryIndex
 from .library.matcher import MatchResult, SongQuery, match
-from .quality import best_status, copy_answers, copy_label, model_for
+from .quality import best_status, best_usable, copy_answers, copy_label, model_for
 from .status import HelperStatus
 from .stems import read_meta, song_key, stem_path
 from .webui import render_index
@@ -65,9 +65,6 @@ def create_app(ctx: AppContext) -> FastAPI:
         timing = ctx.status.timings.get(model) if model else None
         return round(timing.rt * 60, 1) if timing and timing.rt else None
 
-    def best_usable() -> bool:
-        return best_status(ctx.status.timings.get(ctx.settings.best_model)) != "unavailable"
-
     def locate(song: SongRequest) -> MatchResult:
         return match(ctx.index, SongQuery(title=song.title, duration=song.durationSeconds, path=song.path,
                                            album_artist=song.albumArtist, album=song.album, disc=song.disc,
@@ -80,7 +77,7 @@ def create_app(ctx: AppContext) -> FastAPI:
         file = result.file
         key = song_key(file.rel_path, file.size, file.mtime_ns)
         plan = ctx.status.plan
-        usable = best_usable()
+        usable = best_usable(ctx.status.timings, ctx.settings)
         model = model_for(quality, priority, plan, ctx.settings, usable)
         meta = read_meta(ctx.settings.stems_dir, key)
         if meta is not None and copy_answers(meta.quality, quality, priority, plan, usable):
@@ -175,7 +172,7 @@ def create_app(ctx: AppContext) -> FastAPI:
     def lookup_stems(request: LookupRequest) -> list[dict]:
         # Read-only: an index lookup plus a meta.json read, no job rows, so stale `status.error` doesn't apply.
         plan = ctx.status.plan
-        usable = best_usable()
+        usable = best_usable(ctx.status.timings, ctx.settings)
         results = []
         for song in request.songs:
             file = locate(song).file

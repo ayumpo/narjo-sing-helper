@@ -11,6 +11,7 @@ from pathlib import Path
 PRIORITY = {"now": 0, "next": 1, "batch": 2, "upgrade": 3}
 PRIORITY_NAME = {value: name for name, value in PRIORITY.items()}
 URGENT_MAX = PRIORITY["next"]
+QUALITY_RANK = {"fast": 0, "auto": 1, "best": 2, "both": 3}
 
 COLUMNS = ("id, key, rel_path, duration, priority, model, background, state, progress, eta, error, created, updated, "
            "requested_quality")
@@ -94,8 +95,8 @@ class JobStore:
                                  (key, model))
             if existing is not None:
                 existing_id = existing.id
-                if requested_quality != "auto" and existing.requested_quality == "auto":
-                    # A listener's explicit choice outlives Automatic's rules in `retarget_queued`.
+                if QUALITY_RANK[requested_quality] > QUALITY_RANK[existing.requested_quality]:
+                    # The choice that asks for more survives the merge, and then `retarget_queued`.
                     self._db.execute("UPDATE jobs SET requested_quality = ? WHERE id = ?",
                                      (requested_quality, existing_id))
                 if rank < PRIORITY[existing.priority]:
@@ -216,7 +217,8 @@ class JobStore:
 
     def recover(self) -> int:
         with self._lock:
-            cursor = self._db.execute("UPDATE jobs SET state = 'queued', progress = 0 WHERE state = 'running'")
+            cursor = self._db.execute(
+                "UPDATE jobs SET state = 'queued', progress = 0, eta = NULL WHERE state = 'running'")
             self._db.commit()
             return cursor.rowcount
 

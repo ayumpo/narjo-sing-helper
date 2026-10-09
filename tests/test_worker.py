@@ -240,13 +240,16 @@ def test_paused_time_does_not_count_as_progress(setup):
         if len(sleeps) == 4:
             store.set_paused(False)
 
+    etas = []
     record = store.update_progress
-    store.update_progress = lambda job_id, value, eta: (progress.append(value), record(job_id, value, eta))
+    store.update_progress = lambda job_id, value, eta: (progress.append(value), etas.append(eta),
+                                                         record(job_id, value, eta))
     timings = {"htdemucs": ModelTiming("htdemucs", 50.0, 0.0)}  # 50 s per second of audio: 100 s for this song
     runner = FakeRunner(polls_needed=4, on_poll=on_poll)
     assert worker(runner, sleep=sleep, clock=lambda: clock[0], timings=timings).step() is True
     # Paused from t=10 to t=40; the polls at t=0, 40 and 50 count 0, 10 and 20 seconds of work.
     assert [round(value, 2) for value in progress] == [0.0, 0.1, 0.2]
+    assert etas == [100.0, 90.0, 80.0]
 
 
 def test_cancelling_a_queued_song_means_it_never_runs(setup):
@@ -312,6 +315,14 @@ def test_only_automatic_jobs_queue_the_better_copy_afterwards(setup):
     store, file, key, _, worker = setup
     store.submit(key, file.rel_path, file.duration, "now", "htdemucs", False, requested_quality="fast")
     assert worker(FakeRunner()).step() is True
+    assert store.upgrade_pending(key) is False
+
+
+def test_automatic_job_queues_no_upgrade_when_the_better_model_is_unusable(setup):
+    store, file, key, _, worker = setup
+    store.submit(key, file.rel_path, file.duration, "now", "htdemucs", False)
+    timings = {"melband_kim": ModelTiming("melband_kim", None, 0.0)}
+    assert worker(FakeRunner(), timings=timings).step() is True
     assert store.upgrade_pending(key) is False
 
 

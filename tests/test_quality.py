@@ -1,5 +1,6 @@
 from narjo_sing.config import Settings
-from narjo_sing.quality import best_status, copy_answers, copy_label, model_for, queued_model, upgrade_wanted
+from narjo_sing.quality import (best_status, best_usable, copy_answers, copy_label, model_for, queued_model,
+                                upgrade_wanted)
 from narjo_sing.status import ModelTiming
 from narjo_sing.tiers import TierPlan
 
@@ -10,9 +11,10 @@ SINGLE_BEST = TierPlan("single", "melband_kim", "melband_kim", False, False)
 
 
 class Queued:
-    def __init__(self, priority, requested_quality):
+    def __init__(self, priority, requested_quality, model):
         self.priority = priority
         self.requested_quality = requested_quality
+        self.model = model
 
 
 def test_best_status_reads_the_benchmark():
@@ -65,11 +67,21 @@ def test_which_existing_copy_answers_a_request():
 
 
 def test_queued_jobs_keep_the_listeners_choice():
-    assert queued_model(Queued("upgrade", "both"), FAST_ONLY, SETTINGS, True) == "melband_kim"
-    assert queued_model(Queued("upgrade", "auto"), FAST_ONLY, SETTINGS, True) is None
-    assert queued_model(Queued("upgrade", "both"), TWO_TIER, SETTINGS, False) is None
-    assert queued_model(Queued("now", "best"), FAST_ONLY, SETTINGS, True) == "melband_kim"
-    assert queued_model(Queued("batch", "auto"), TWO_TIER, SETTINGS, True) == "melband_kim"
+    assert queued_model(Queued("upgrade", "both", "melband_kim"), FAST_ONLY, SETTINGS, True) == "melband_kim"
+    assert queued_model(Queued("upgrade", "auto", "melband_kim"), FAST_ONLY, SETTINGS, True) is None
+    assert queued_model(Queued("upgrade", "both", "melband_kim"), TWO_TIER, SETTINGS, False) is None
+    assert queued_model(Queued("now", "best", "melband_kim"), FAST_ONLY, SETTINGS, True) == "melband_kim"
+    assert queued_model(Queued("batch", "auto", "melband_kim"), TWO_TIER, SETTINGS, True) == "melband_kim"
+    # An explicit choice keeps the model it was queued with; it is never recomputed from the plan.
+    assert queued_model(Queued("batch", "both", "melband_kim"), TWO_TIER, SETTINGS, True) == "melband_kim"
+    assert queued_model(Queued("now", "best", "melband_kim"), TWO_TIER, SETTINGS, False) == "htdemucs"
+    assert queued_model(Queued("now", "best", "retired_model"), TWO_TIER, SETTINGS, True) == "melband_kim"
+
+
+def test_best_usable_reads_the_configured_models_status():
+    assert best_usable({"melband_kim": ModelTiming("melband_kim", 17.0, 11.0)}, SETTINGS) is True
+    assert best_usable({"melband_kim": ModelTiming("melband_kim", None, 0.0)}, SETTINGS) is False
+    assert best_usable({}, SETTINGS) is True
 
 
 def test_copy_label_follows_the_configured_better_model():
