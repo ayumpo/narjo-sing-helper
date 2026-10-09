@@ -99,6 +99,28 @@ docker compose up -d --build
 3. Tap **Test Connection**.
 4. Play a song, open the **lyrics**, and tap the **microphone** above the "…" button.
 
+## Fast, Best or both
+
+In Narjo, **Settings → Integrations → Sing → Quality** chooses how songs are prepared on that phone:
+
+- **Automatic** (the default): the helper decides from its own speed. A fast computer makes the better
+  version straight away, a medium one makes the fast version first and the better one later, and a slow
+  NAS makes only the fast version, so it isn't busy for hours.
+- **Fast**: the fast version only. Ready soonest.
+- **Best**: only the better version. The first time you sing a song you wait longer.
+- **Both**: the fast version first, so you can sing right away; the better version replaces it when it's ready.
+
+Narjo shows how long each choice takes on your helper. People who share one helper can each choose their own.
+
+## Pause or cancel
+
+- **Pause** stops the helper working without losing anything: the song in progress freezes where it is and
+  carries on when you press **Resume**. Nothing new starts while it's paused, and it stays paused after a restart.
+- **Cancel** stops one song for good. It isn't prepared again until someone asks for it.
+
+You can do both in Narjo (**Settings → Integrations → Sing → Helper Queue**, or the message above the
+microphone while a song is being prepared) or on the helper's own page at `http://YOUR-SERVER-IP:8765`.
+
 ## Check that it's working
 
 Open `http://YOUR-SERVER-IP:8765` in a web browser. It confirms the helper is running. Paste your access key
@@ -245,32 +267,40 @@ needs no key, but shows nothing sensitive until a key is entered in the browser.
 - `GET /v1/ping` — `{ok: true}`. No key required; used as the container health check.
 - `GET /v1/health` — helper and benchmark status:
   `{version, device, state, error, mode, fastModel, bestModel, fastSecondsPerMinute,
-  bestSecondsPerMinute, queueLength, backgroundPrepRecommended, libraryFiles}`.
+  bestSecondsPerMinute, queueLength, backgroundPrepRecommended, libraryFiles, qualityChoices, paused,
+  configuredBestModel, bestStatus}`.
   `state` is `benchmarking`, `ready` or `error`; `error` is set only in the `error` state.
-  `mode` is `single`, `two-tier` or `fast-only` once benchmarking has finished.
-- `GET /v1/queue` — read-only snapshot for the status page:
-  `{jobs: [{id, relPath, model, priority, state, progress, etaSeconds, created, updated}],
-  recent: [{relPath, quality, model, finished}]}`. `jobs` lists queued and running jobs in the
-  order the worker will run them (the running job, if any, first; then by priority and creation
-  time). `recent` lists the last 50 distinct songs with stems, most recently finished first.
+  `mode` is `single`, `two-tier` or `fast-only` once benchmarking has finished. `qualityChoices` is `true`
+  on helpers that accept `quality`. `bestStatus` is `pending`, `measured`, `tooSlow` (slower than 30× real
+  time) or `unavailable` (the better model failed to install).
+- `GET /v1/queue` — snapshot for the status page:
+  `{paused, jobs: [{id, relPath, model, priority, state, progress, etaSeconds, created, updated,
+  requestedQuality, quality}], recent: [{relPath, quality, model, finished}]}`. `jobs` lists queued and
+  running jobs in the order the worker will run them (the running job, if any, first; then by priority and
+  creation time). `quality` is the label the job's copy will get. `recent` lists the last 50 distinct songs
+  with stems, most recently finished first.
+- `POST /v1/queue/pause` and `POST /v1/queue/resume` — `{paused}`. While paused nothing new starts and the
+  running separation is frozen; the switch survives a restart.
 - `POST /v1/jobs` — submit a song:
-  request `{clientSongId, title, durationSeconds, path?, albumArtist?, album?, disc?, track?,
-  priority}` (`priority` is `now`, `next` or `batch`); response
+  request `{clientSongId, title, durationSeconds, path?, albumArtist?, album?, disc?, track?, priority, quality?}` (`priority` is `now`, `next` or `batch`); response
   `{clientSongId, jobId?, state, etaSeconds?, matchedBy?, searched?}`.
-  `state` is one of `queued|running|done|failed|notFound|expired`. On `notFound`, `searched`
+  `quality` is `auto` (the default), `fast`, `best` or `both`.
+  `state` is one of `queued|running|done|failed|cancelled|notFound|expired`. On `notFound`, `searched`
   lists the matching strategies that were tried instead of a `jobId`.
-- `POST /v1/jobs/batch` — submit several songs at once: request `{songs: [...], priority:
-  "batch"}`, with each entry shaped like a `POST /v1/jobs` request; response is a list of
+- `POST /v1/jobs/batch` — submit several songs at once: request `{songs: [...], priority: "batch", quality?}`, with each entry shaped like a `POST /v1/jobs` request; response is a list of
   `{clientSongId, jobId?, state, etaSeconds?, matchedBy?, searched?}`.
 - `POST /v1/stems/lookup` — check readiness for up to 200 songs without creating any jobs:
-  request `{songs: [...]}`, each entry shaped like a `POST /v1/jobs` request minus `priority`
+  request `{songs: [...], quality?}`, each entry shaped like a `POST /v1/jobs` request minus `priority`
   (1–200 songs, else 422); response is a list in request order of
   `{clientSongId, ready, quality}`. `ready` is true only when the song matches a library file
   and stems already exist for it; `quality` (`fast`, `best`, or `null`) is the tier of those
   stems, `null` when `ready` is false.
-- `GET /v1/jobs/{jobId}` — `{state, progress, etaSeconds?, error?, quality, upgradePending}`.
+  With `quality: "best"`, `ready` is true only for `best` stems.
+- `GET /v1/jobs/{jobId}` — `{state, progress, etaSeconds?, error?, quality, upgradePending, helperPaused}`.
   `progress` is 0…1. `quality` (`fast` or `best`) is the tier of the stems currently available.
   `upgradePending` is true while a best-tier upgrade for this song is queued or running.
+- `POST /v1/jobs/{jobId}/cancel` — cancels every queued or running job for that song, its upgrade included:
+  `{cancelled: <count>}`. Unknown id → 404. A cancel that arrives once the separation has its result keeps it.
 - `GET /v1/jobs/{jobId}/vocals.m4a` and `GET /v1/jobs/{jobId}/instrumental.m4a` — the two stems,
   AAC 256 kbps 44.1 kHz stereo, with `ETag` and HTTP Range support. The `ETag` changes when a
   best-tier upgrade replaces the stems.
