@@ -75,6 +75,9 @@ class SubprocessRun:
 
     def _signal(self, sig: int) -> None:
         # The child leads its own process group (`start_new_session`), so anything it started gets the signal too.
+        # Once reaped, its pid may belong to another process, so nothing is sent.
+        if self.process.returncode is not None:
+            return
         try:
             os.killpg(self.process.pid, sig)
         except ProcessLookupError:

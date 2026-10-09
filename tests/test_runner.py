@@ -161,3 +161,17 @@ def test_cancel_stops_a_suspended_child_promptly(runner, monkeypatch):
     started = time.monotonic()
     run.cancel()
     assert run.poll() is True and time.monotonic() - started < 5
+
+
+def test_signals_never_reach_a_reaped_child(runner, monkeypatch):
+    run = runner.start("htdemucs", tone(), background=False)
+    deadline = time.monotonic() + 20
+    while not run.poll():
+        assert time.monotonic() < deadline
+        time.sleep(0.05)
+    sent = []
+    monkeypatch.setattr(os, "killpg", lambda pid, sig: sent.append(sig))
+    run.suspend()
+    run.resume()
+    run.cancel()
+    assert sent == []
