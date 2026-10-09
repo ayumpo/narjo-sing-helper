@@ -1,4 +1,6 @@
+import re
 import shutil
+import subprocess
 
 import pytest
 from conftest import FakeRunner, make_flac
@@ -336,3 +338,24 @@ def test_cancel_stops_the_song_and_its_better_copy(env):
     assert client.post("/v1/jobs/nope/cancel").status_code == 404
     again = client.post("/v1/jobs", json={**SONG, "priority": "now"}).json()
     assert again["state"] == "queued" and again["jobId"] != created["jobId"]
+
+
+def test_index_page_has_pause_and_cancel_without_browser_dialogs(env):
+    client, _, _ = env
+    body = TestClient(client.app).get("/").text
+    assert 'id="pause-btn"' in body and "Cancel this song?" in body
+    assert "/v1/queue/pause" in body and "/v1/queue/resume" in body and "/cancel" in body
+    assert "confirm(" not in body and "alert(" not in body
+    assert "Fast version first, better version later" in body
+
+
+def test_index_page_script_is_valid_javascript(env, tmp_path):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    client, _, _ = env
+    body = TestClient(client.app).get("/").text
+    script = re.search(r"<script>(.*)</script>", body, re.S).group(1)
+    path = tmp_path / "page.js"
+    path.write_text(script)
+    assert subprocess.run([node, "--check", str(path)], capture_output=True).returncode == 0

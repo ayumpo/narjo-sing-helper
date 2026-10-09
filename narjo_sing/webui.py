@@ -31,6 +31,9 @@ _PAGE = """<!doctype html>
   .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px;
           padding: 16px; margin-bottom: 16px; }
   .card p { font-size: .9rem; line-height: 1.5; margin: 0 0 12px; }
+  .card-head { display: flex; justify-content: space-between; align-items: center; gap: 10px;
+               margin-bottom: 12px; }
+  .card-head h2 { margin: 0; }
   code { background: var(--bg); padding: 1px 5px; border-radius: 4px; font-size: .85em; }
   label { display: block; font-size: .85rem; margin-bottom: 6px; color: var(--muted); }
   input[type=password] { width: 100%; padding: 8px 10px; border: 1px solid var(--border);
@@ -42,9 +45,14 @@ _PAGE = """<!doctype html>
   button { background: var(--accent); color: #fff; border: none; border-radius: 8px;
            padding: 9px 16px; font-size: .9rem; cursor: pointer; }
   button:active { opacity: .85; }
+  button:disabled { opacity: .5; cursor: default; }
+  button.small { padding: 5px 10px; font-size: .8rem; }
+  button.plain { background: transparent; color: var(--accent); border: 1px solid var(--border); }
+  button.danger { background: var(--danger); }
   .err { color: var(--danger); font-size: .85rem; margin: 10px 0 0; }
   .hidden { display: none !important; }
   .muted { color: var(--muted); font-size: .85rem; }
+  .note { color: var(--muted); font-size: .85rem; margin: 0 0 10px; }
   .row { display: flex; justify-content: space-between; gap: 10px; padding: 7px 0;
          border-bottom: 1px solid var(--border); font-size: .85rem; }
   .row:last-child { border-bottom: none; }
@@ -54,6 +62,8 @@ _PAGE = """<!doctype html>
   .entry:last-child { border-bottom: none; }
   .entry .song { overflow-wrap: anywhere; }
   .entry .meta { color: var(--muted); font-size: .8rem; margin-top: 2px; }
+  .job { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+  .actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; font-size: .8rem; }
 </style>
 </head>
 <body>
@@ -62,7 +72,7 @@ _PAGE = """<!doctype html>
   <p class="sub">Version __VERSION__</p>
 
   <div class="card" id="connect-card">
-    <p>In Narjo, open <strong>Settings &rsaquo; Integrations &rsaquo; Sing</strong> and enter this
+    <p>In Narjo, open <strong>Settings › Integrations › Sing</strong> and enter this
        address and the access key. The key is in <code>stems/access-key.txt</code> next to your
        compose file, or in the container log line <code>Access key</code>.</p>
     <label for="key-input">Access key</label>
@@ -75,18 +85,23 @@ _PAGE = """<!doctype html>
   <div id="status-card" class="card hidden">
     <h2>Status</h2>
     <div class="row"><span>State</span><span id="s-state"></span></div>
-    <div class="row"><span>Device</span><span id="s-device"></span></div>
-    <div class="row"><span>Mode</span><span id="s-mode"></span></div>
-    <div class="row"><span>Fast model</span><span id="s-fast"></span></div>
-    <div class="row"><span>Best model</span><span id="s-best"></span></div>
-    <div class="row"><span>Library files</span><span id="s-library"></span></div>
-    <div class="row"><span>Queue length</span><span id="s-queue"></span></div>
+    <div class="row"><span>Computer</span><span id="s-device"></span></div>
+    <div class="row"><span>How it works here</span><span id="s-mode"></span></div>
+    <div class="row"><span>Fast version</span><span id="s-fast"></span></div>
+    <div class="row"><span>Better version</span><span id="s-best"></span></div>
+    <div class="row"><span>Songs in your library</span><span id="s-library"></span></div>
+    <div class="row"><span>Songs waiting</span><span id="s-queue"></span></div>
   </div>
 
   <div id="queue-card" class="card hidden">
-    <h2>Queue</h2>
+    <div class="card-head">
+      <h2>Being prepared</h2>
+      <button id="pause-btn" type="button" class="small">Pause</button>
+    </div>
+    <p id="paused-note" class="note hidden">Paused. Nothing new starts, and the song in progress waits
+       exactly where it is, until you press Resume.</p>
     <div id="queue-rows"></div>
-    <p id="queue-empty" class="muted hidden">Nothing queued.</p>
+    <p id="queue-empty" class="muted hidden">Nothing is being prepared.</p>
   </div>
 
   <div id="recent-card" class="card hidden">
@@ -105,7 +120,11 @@ _PAGE = """<!doctype html>
   var statusCard = document.getElementById("status-card");
   var queueCard = document.getElementById("queue-card");
   var recentCard = document.getElementById("recent-card");
+  var pauseBtn = document.getElementById("pause-btn");
+  var pausedNote = document.getElementById("paused-note");
   var timer = null;
+  var lastResult = null;
+  var confirmingJob = null;
 
   try {
     var saved = localStorage.getItem(KEY_STORAGE);
@@ -121,17 +140,6 @@ _PAGE = """<!doctype html>
 
   function clearChildren(el) {
     while (el.firstChild) el.removeChild(el.firstChild);
-  }
-
-  function addRow(container, cells) {
-    var row = document.createElement("div");
-    row.className = "row";
-    cells.forEach(function (text) {
-      var span = document.createElement("span");
-      span.textContent = text;
-      row.appendChild(span);
-    });
-    container.appendChild(row);
   }
 
   function addEntry(container, song, metaText) {
@@ -153,54 +161,151 @@ _PAGE = """<!doctype html>
   }
 
   function fmtEta(seconds) {
-    if (seconds === null || seconds === undefined) return "—";
     var s = Math.round(seconds);
-    if (s < 60) return s + "s";
-    return Math.round(s / 60) + "m";
+    if (s < 60) return s + " s";
+    return Math.round(s / 60) + " min";
   }
 
   function setText(id, text) {
     document.getElementById(id).textContent = text;
   }
 
+  function post(path) {
+    return fetch(path, { method: "POST", headers: { "X-Narjo-Sing-Key": keyInput.value } });
+  }
+
+  function qualityName(quality) {
+    return quality === "best" ? "Best" : "Fast";
+  }
+
+  function perSong(secondsPerMinute) {
+    var minutes = Math.max(1, Math.ceil(secondsPerMinute * 4 / 60));
+    return "about " + minutes + " min for a 4-minute song";
+  }
+
+  function stateLabel(health) {
+    if (health.state === "benchmarking") return "Measuring this computer's speed (a few minutes the first time)";
+    if (health.state === "error") return "Problem: " + (health.error || "unknown");
+    return health.paused ? "Paused" : "Ready";
+  }
+
+  function modeLabel(mode) {
+    if (mode === "single") return "Uses one model for everything";
+    if (mode === "two-tier") return "Fast version first, better version later";
+    if (mode === "fast-only") return "Fast version only";
+    return "—";
+  }
+
+  function fastLabel(health) {
+    return health.fastModel + (health.fastSecondsPerMinute != null ? " · " + perSong(health.fastSecondsPerMinute) : "");
+  }
+
+  function bestLabel(health) {
+    var name = health.configuredBestModel || health.bestModel || "—";
+    if (health.bestStatus === "measured" && health.bestSecondsPerMinute != null) {
+      return name + " · " + perSong(health.bestSecondsPerMinute);
+    }
+    if (health.bestStatus === "tooSlow") return name + " · too slow on this computer (over 2 hours a song)";
+    if (health.bestStatus === "unavailable") return name + " · not available (it failed to install)";
+    if (health.bestStatus === "pending") return name + " · measuring…";
+    return name;
+  }
+
+  function describeJob(job, paused) {
+    var parts = [qualityName(job.quality)];
+    if (job.state === "running") {
+      parts.push((paused ? "paused at " : "preparing, ") + Math.round(job.progress * 100) + "%");
+      if (!paused && job.etaSeconds != null) parts.push("about " + fmtEta(job.etaSeconds) + " left");
+    } else {
+      parts.push(paused ? "waiting (paused)" : "waiting");
+    }
+    return parts.join(" · ");
+  }
+
+  function smallButton(label, style, onClick) {
+    var button = document.createElement("button");
+    button.type = "button";
+    button.className = "small " + style;
+    button.textContent = label;
+    button.addEventListener("click", onClick);
+    return button;
+  }
+
+  function cancelControl(job) {
+    var box = document.createElement("div");
+    box.className = "actions";
+    if (confirmingJob === job.id) {
+      var ask = document.createElement("span");
+      ask.textContent = "Cancel this song?";
+      box.appendChild(ask);
+      box.appendChild(smallButton("Yes", "danger", function () {
+        confirmingJob = null;
+        post("/v1/jobs/" + encodeURIComponent(job.id) + "/cancel").then(poll, poll);
+      }));
+      box.appendChild(smallButton("No", "plain", function () {
+        confirmingJob = null;
+        rerender();
+      }));
+    } else {
+      box.appendChild(smallButton("Cancel", "plain", function () {
+        confirmingJob = job.id;
+        rerender();
+      }));
+    }
+    return box;
+  }
+
+  function addJob(container, job, paused) {
+    var entry = document.createElement("div");
+    entry.className = "entry job";
+    var text = document.createElement("div");
+    var songEl = document.createElement("div");
+    songEl.className = "song";
+    songEl.textContent = songLabel(job.relPath);
+    var metaEl = document.createElement("div");
+    metaEl.className = "meta";
+    metaEl.textContent = describeJob(job, paused);
+    text.appendChild(songEl);
+    text.appendChild(metaEl);
+    entry.appendChild(text);
+    entry.appendChild(cancelControl(job));
+    container.appendChild(entry);
+  }
+
   function render(health, queue) {
-    setText("s-state", health.state + (health.error ? " (" + health.error + ")" : ""));
+    setText("s-state", stateLabel(health));
     setText("s-device", health.device || "—");
-    setText("s-mode", health.mode || "—");
-    setText("s-fast", health.fastModel + (health.fastSecondsPerMinute != null ?
-      " (" + health.fastSecondsPerMinute + " s/min)" : ""));
-    setText("s-best", health.bestModel ? health.bestModel + (health.bestSecondsPerMinute != null ?
-      " (" + health.bestSecondsPerMinute + " s/min)" : "") : "—");
+    setText("s-mode", modeLabel(health.mode));
+    setText("s-fast", fastLabel(health));
+    setText("s-best", bestLabel(health));
     setText("s-library", health.libraryFiles);
     setText("s-queue", health.queueLength);
     statusCard.classList.remove("hidden");
 
+    var paused = !!queue.paused;
+    pauseBtn.textContent = paused ? "Resume" : "Pause";
+    pausedNote.classList.toggle("hidden", !paused);
     var queueRows = document.getElementById("queue-rows");
     var queueEmpty = document.getElementById("queue-empty");
     clearChildren(queueRows);
-    if (queue.jobs.length === 0) {
-      queueEmpty.classList.remove("hidden");
-    } else {
-      queueEmpty.classList.add("hidden");
-      queue.jobs.forEach(function (job) {
-        addRow(queueRows, [songLabel(job.relPath), job.model, job.priority, job.state,
-          Math.round(job.progress * 100) + "%", fmtEta(job.etaSeconds)]);
-      });
-    }
+    if (!queue.jobs.some(function (job) { return job.id === confirmingJob; })) confirmingJob = null;
+    queueEmpty.classList.toggle("hidden", queue.jobs.length !== 0);
+    queue.jobs.forEach(function (job) { addJob(queueRows, job, paused); });
     queueCard.classList.remove("hidden");
 
     var recentRows = document.getElementById("recent-rows");
     var recentEmpty = document.getElementById("recent-empty");
     clearChildren(recentRows);
-    if (queue.recent.length === 0) {
-      recentEmpty.classList.remove("hidden");
-    } else {
-      recentEmpty.classList.add("hidden");
-      queue.recent.forEach(function (item) {
-        addEntry(recentRows, songLabel(item.relPath), (item.quality || "—") + " · " + fmtWhen(item.finished));
-      });
-    }
+    recentEmpty.classList.toggle("hidden", queue.recent.length !== 0);
+    queue.recent.forEach(function (item) {
+      addEntry(recentRows, songLabel(item.relPath),
+               (item.quality ? qualityName(item.quality) : "—") + " · " + fmtWhen(item.finished));
+    });
     recentCard.classList.remove("hidden");
+  }
+
+  function rerender() {
+    if (lastResult) render(lastResult.health, lastResult.queue);
   }
 
   function hideCards() {
@@ -211,9 +316,9 @@ _PAGE = """<!doctype html>
 
   function poll() {
     var key = keyInput.value;
-    if (!key) return;
+    if (!key) return Promise.resolve();
     var headers = { "X-Narjo-Sing-Key": key };
-    fetch("/v1/health", { headers: headers }).then(function (healthResp) {
+    return fetch("/v1/health", { headers: headers }).then(function (healthResp) {
       if (healthResp.status === 401) { authError.classList.remove("hidden"); hideCards(); return null; }
       return healthResp.json().then(function (health) {
         return fetch("/v1/queue", { headers: headers }).then(function (queueResp) {
@@ -224,6 +329,7 @@ _PAGE = """<!doctype html>
     }).then(function (result) {
       if (!result) return;
       authError.classList.add("hidden");
+      lastResult = result;
       render(result.health, result.queue);
     }).catch(function () { /* a transient network error leaves the last good render in place */ });
   }
@@ -235,6 +341,14 @@ _PAGE = """<!doctype html>
       if (document.visibilityState === "visible") poll();
     }, 5000);
   }
+
+  pauseBtn.addEventListener("click", function () {
+    var paused = !!(lastResult && lastResult.queue.paused);
+    pauseBtn.disabled = true;
+    post(paused ? "/v1/queue/resume" : "/v1/queue/pause").then(poll, poll).then(function () {
+      pauseBtn.disabled = false;
+    });
+  });
 
   document.getElementById("connect-btn").addEventListener("click", function () {
     try {
