@@ -16,5 +16,9 @@ def test_other_arm_boards_name_the_architecture():
     assert cpu_name(cpuinfo, "aarch64", 4) == "aarch64, 4 cores"
 
 
+def test_one_core():
+    assert cpu_name("CPU implementer\t: 0x41\n", "armv7l", 1) == "armv7l, 1 core"
+
+
 def test_nothing_known():
     assert cpu_name("", "", None) == "unknown"

@@ -96,7 +96,7 @@ docker compose up -d --build
    docker-compose up -d --build
    ```
 
-**Mac** (tested on a Mac with an M1 chip)
+**Mac** (the helper is tested on a Mac with an M1 chip; the Docker Desktop screens below are not yet tested)
 
 The Mac must stay switched on, awake and signed in while you want songs prepared.
 
@@ -104,15 +104,15 @@ The Mac must stay switched on, awake and signed in while you want songs prepared
    **Apple Silicon** or **Intel** to match your Mac: Apple menu → **About This Mac** → **Chip**). Open it once and
    wait until it says **Engine running**.
 2. In Docker Desktop → **Settings** → **Resources**, check that **Memory** is at least **4 GB** (raise it if
-   not, then **Apply & restart**).
-3. Do steps 1 and 2 above (download, and put your music folder in `docker-compose.yml`).
+   not, then **Apply & restart**). The helper used about 3 GB in our test.
+3. Do **1. Download** and **2. Tell it where your music is** above.
 4. Open **Terminal** (in Applications → Utilities), type `cd ` (with a space), drag your `narjo-sing-helper`
    folder into the Terminal window, and press **Return**. Then run:
    ```bash
    docker compose up -d --build
    ```
-   The first time it downloads about 3 GB and takes 10–30 minutes. If your Mac asks whether Docker may use a
-   folder, or accept incoming network connections, click **Allow**.
+   The first time it downloads about 3 GB and takes about 15 minutes on an M1. If your Mac asks whether Docker
+   may use a folder, or accept incoming network connections, click **Allow**.
 5. So it keeps working after a restart: Docker Desktop → **Settings** → **General** → tick **Start Docker Desktop
    when you sign in to your computer**. The helper itself starts again with Docker.
 6. So it doesn't stop when the screen turns off: **System Settings** → **Energy** (**Energy Saver** on older
@@ -128,7 +128,7 @@ The PC must stay switched on, awake and signed in while you want songs prepared.
 1. Install **Docker Desktop** from [docker.com](https://www.docker.com/products/docker-desktop/). Keep the
    **WSL 2** option ticked, and restart the PC when it asks. Open Docker Desktop once and wait until it says
    **Engine running**.
-2. Do steps 1 and 2 above (download, and put your music folder in `docker-compose.yml`, written like
+2. Do **1. Download** and **2. Tell it where your music is** above (write the music folder like
    `C:/Users/Jane/Music`). Your music must be on this PC's own drive: a network drive with a letter (like
    `Z:`) doesn't work here. For music on a NAS, see
    [Music on a NAS, helper on a Mac or PC](#music-on-a-nas-helper-on-a-mac-or-pc).
@@ -137,7 +137,7 @@ The PC must stay switched on, awake and signed in while you want songs prepared.
    ```powershell
    docker compose up -d --build
    ```
-   The first time it downloads about 3 GB and takes 10–30 minutes.
+   The first time it downloads about 3 GB, which can take up to half an hour.
 4. If Windows asks whether to allow Docker on your networks, choose **Private networks** and **Allow**.
 5. So it keeps working after a restart: Docker Desktop → **Settings** → **General** → tick **Start Docker Desktop
    when you sign in to your computer**.
@@ -150,7 +150,7 @@ The PC must stay switched on, awake and signed in while you want songs prepared.
 
 The helper can run on a fast Mac or PC while your music stays on your NAS. There are two ways.
 
-**Docker connects to the NAS itself** (Mac and Windows; tested on a Mac, not yet on Windows)
+**Docker connects to the NAS itself** (Mac and Windows; tested on a Mac, not yet with Docker Desktop or on Windows)
 
 It reconnects by itself after a restart.
 
@@ -356,9 +356,9 @@ your hardware landed in.
 Docker on macOS runs Linux containers in a virtual machine that can't use the Mac's GPU, so the helper runs
 on the CPU there. Measured on an M1 with 6 cores and 8 GB given to Docker: HTDemucs 51 s and MelBand
 RoFormer 114 s per minute of audio, so the helper picks `single` mode; memory peaked at about 2.8 GB while
-separating. [Colima](https://github.com/abiosoft/colima) works as well as Docker Desktop
-(`colima start --vm-type vz --cpu 6 --memory 8`); it shares only your home folder with containers unless you
-add `--mount`, so keep your music folder there or mount its location.
+separating. That test ran Docker through [Colima](https://github.com/abiosoft/colima), a free alternative
+to Docker Desktop (`colima start --vm-type vz --cpu 6 --memory 8`). Colima shares only your home folder with
+containers unless you add `--mount`, so keep your music folder there or mount its location.
 
 A music folder on a NAS can be mounted by Docker itself as a CIFS volume (see
 [Music on a NAS, helper on a Mac or PC](#music-on-a-nas-helper-on-a-mac-or-pc)); the mount runs inside

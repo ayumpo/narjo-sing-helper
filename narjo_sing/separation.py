@@ -82,8 +82,8 @@ def detect_device() -> str:
 
 
 def cpu_name(cpuinfo: str, machine: str, cores: int | None) -> str:
-    """The CPU's model name. ARM Linux (Docker on a Mac, a Raspberry Pi) reports none, so the maker or the
-    architecture stands in, with the core count; implementer 0x61 is Apple."""
+    """The CPU's model name. ARM Linux (Docker on a Mac, a Raspberry Pi) often reports none, so the maker or
+    the architecture stands in, with the core count; implementer 0x61 is Apple."""
     for line in cpuinfo.splitlines():
         if line.startswith("model name"):
             return line.split(":", 1)[1].strip()
@@ -91,4 +91,6 @@ def cpu_name(cpuinfo: str, machine: str, cores: int | None) -> str:
         vendor = "Apple silicon"
     else:
         vendor = machine or "unknown"
-    return f"{vendor}, {cores} cores" if cores and vendor != "unknown" else vendor
+    if not cores or vendor == "unknown":
+        return vendor
+    return f"{vendor}, {cores} {'core' if cores == 1 else 'cores'}"
