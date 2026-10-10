@@ -103,9 +103,9 @@ class Worker:
         return True
 
     def _wait(self, job: Job, run, expected: float) -> bool:
-        """Polls `run` until it finishes. False when it was cancelled, or set aside — for an urgent background
-        request, or because a different song's `now` request pre-empts a running foreground Best job. While
-        the helper is paused the run is frozen, and the paused time counts neither as progress nor toward the ETA."""
+        """Polls `run` until it finishes. False when it was cancelled, or set aside — a background job for
+        any urgent request, or a foreground Best job for a different song's `now` request. While the helper
+        is paused the run is frozen, and the paused time counts neither as progress nor toward the ETA."""
         started = self._clock()
         paused_for = 0.0
         paused_at = None
@@ -127,14 +127,16 @@ class Worker:
                 paused_at = None
                 log.info("Resumed %s", job.rel_path)
             if (not job.background and job.model == self.settings.best_model
-                    and self.store.has_other_now_queued(job.key)):
+                    and job.model != self.settings.fast_model and self.store.has_other_now_queued(job.key)):
                 run.cancel()
                 self.store.set_aside(job.id)
                 log.info("Set %s aside for the song now playing", job.rel_path)
                 return False
             if job.background and self.store.has_urgent_queued():
                 run.cancel()
-                self.store.requeue(job.id)
+                # A `now` request can promote this job mid-run without refreshing this stale snapshot of it;
+                # set_aside only demotes that promoted priority, leaving a plain background job's alone.
+                self.store.set_aside(job.id)
                 log.info("Set %s aside for an urgent request", job.rel_path)
                 return False
             elapsed = self._clock() - started - paused_for

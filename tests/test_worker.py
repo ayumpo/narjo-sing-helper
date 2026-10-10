@@ -103,6 +103,64 @@ def test_a_running_fast_job_is_not_set_aside_for_the_song_now_playing(setup):
     assert store.get(job.id).state == "done"
 
 
+def test_a_running_job_is_not_set_aside_when_fast_and_best_are_the_same_model(setup):
+    store, file, key, _, worker = setup
+    job = store.submit(key, file.rel_path, file.duration, "now", "htdemucs", False)
+
+    def on_poll(count):
+        if count == 2:
+            store.submit("other", "elsewhere.flac", 3, "now", "htdemucs", False)
+
+    runner = FakeRunner(polls_needed=5, on_poll=on_poll)
+    assert worker(runner, SING_BEST_MODEL="htdemucs").step() is True
+    assert runner.started[0][2].cancelled is False
+    assert store.get(job.id).state == "done"
+
+
+def test_a_queued_now_job_for_the_same_song_does_not_set_aside_the_running_job(setup):
+    store, file, key, _, worker = setup
+    job = store.submit(key, file.rel_path, file.duration, "now", "melband_kim", False, requested_quality="best")
+
+    def on_poll(count):
+        if count == 2:
+            store.submit(key, file.rel_path, file.duration, "now", "htdemucs", False)  # same song, other model
+
+    runner = FakeRunner(polls_needed=5, on_poll=on_poll)
+    assert worker(runner).step() is True
+    assert runner.started[0][2].cancelled is False
+    assert store.get(job.id).state == "done"
+
+
+def test_a_running_upgrade_promoted_to_now_is_set_aside_behind_the_new_song(music, stems):
+    make_flac(music / "A/B/01 - Song.flac", seconds=2, ALBUMARTIST="A", ALBUM="B", TITLE="Song")
+    make_flac(music / "C/D/02 - Other.flac", seconds=2, ALBUMARTIST="C", ALBUM="D", TITLE="Other")
+    index = LibraryIndex(stems / "index.sqlite", music)
+    index.scan()
+    store = JobStore(stems / "jobs.sqlite")
+    settings = Settings.from_env({"SING_MUSIC_DIR": str(music), "SING_STEMS_DIR": str(stems)})
+    status = HelperStatus(plan=TWO_TIER, timings={})
+    file = index.get("A/B/01 - Song.flac")
+    key = song_key(file.rel_path, file.size, file.mtime_ns)
+    other = index.get("C/D/02 - Other.flac")
+    other_key = song_key(other.rel_path, other.size, other.mtime_ns)
+    job = store.submit(key, file.rel_path, file.duration, "upgrade", "melband_kim", True)
+
+    def on_poll(count):
+        if count == 2:
+            # The listener asks Best for the song already getting its background upgrade, promoting it to
+            # "now" mid-run, then skips to a different song.
+            store.submit(key, file.rel_path, file.duration, "now", "melband_kim", False)
+            store.submit(other_key, other.rel_path, other.duration, "now", "htdemucs", False)
+
+    runner = FakeRunner(polls_needed=50, on_poll=on_poll)
+    w = Worker(store, index, runner, settings, status, sleep=lambda _: None, now=lambda: clock_time(12, 0))
+    assert w.step() is True
+    assert runner.started[0][2].cancelled is True
+    assert (store.get(job.id).state, store.get(job.id).priority) == ("queued", "next")
+    assert w.step() is True
+    assert runner.started[1][0] == "htdemucs"
+
+
 def test_changed_file_fails_the_job(setup):
     store, file, _, _, worker = setup
     job = store.submit("stale-key", file.rel_path, file.duration, "now", "htdemucs", False)
