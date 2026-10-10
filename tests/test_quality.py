@@ -74,9 +74,9 @@ def test_queued_jobs_keep_the_listeners_choice():
     assert queued_model(Queued("batch", "auto", "melband_kim"), TWO_TIER, SETTINGS, True) == "melband_kim"
     # Both keeps the model it was queued with; it is never recomputed from the plan.
     assert queued_model(Queued("batch", "both", "melband_kim"), TWO_TIER, SETTINGS, True) == "melband_kim"
+    # Best is recomputed instead, from a fast fallback, a retired model name, or a benchmark that works again.
     assert queued_model(Queued("now", "best", "melband_kim"), TWO_TIER, SETTINGS, False) == "htdemucs"
     assert queued_model(Queued("now", "best", "retired_model"), TWO_TIER, SETTINGS, True) == "melband_kim"
-    # Best, unlike Both, is recomputed: a restart where the better model works again moves it off fast.
     assert queued_model(Queued("now", "best", "htdemucs"), TWO_TIER, SETTINGS, True) == "melband_kim"
 
 
