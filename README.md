@@ -1,7 +1,7 @@
 # Narjo Sing helper
 
 Sing lets Narjo turn the singer's voice down, or off, so you can sing along — like Apple
-Music Sing, but for your own music library.
+Music Sing, but for your own music library. It can also play the singer's voice on its own.
 
 This helper does the heavy lifting. It runs on your own server, next to Navidrome, Plex, Jellyfin or Emby,
 and separates each song into "vocals" and "music". Your music never leaves your home network.
@@ -196,8 +196,8 @@ It reconnects by itself after a restart.
 
 ## Fast, Best or both
 
-When your Narjo app includes these settings (coming in an update), **Settings → Integrations → Sing → Quality**
-chooses how songs are prepared on that phone:
+When your Narjo app includes these settings (coming in an update), the **Quality** menu in **Settings →
+Integrations → Sing** chooses how songs are prepared on that phone:
 
 - **Automatic** (the default): the helper decides from its own speed. A fast computer makes the better
   version straight away, a medium one makes the fast version first and the better one later, and a slow
@@ -206,7 +206,23 @@ chooses how songs are prepared on that phone:
 - **Best**: only the better version. The first time you sing a song you wait longer.
 - **Both**: the fast version first, so you can sing right away; the better version replaces it when it's ready.
 
-Narjo shows how long each choice takes on your helper. People who share one helper can each choose their own.
+Under the menu, Narjo says how long your choice takes on your helper; a choice your helper can't do isn't
+offered. People who share one helper can each choose their own.
+
+## Music, voice, or both
+
+The helper makes two files for every song: the music without the singer, and the singer's voice on its own.
+When your Narjo app includes this setting (coming in an update), the **Sing Plays** menu in **Settings →
+Integrations → Sing** chooses what that phone plays:
+
+- **Music and Voice** (the default): both files, with a slider above the microphone to turn the voice up or
+  down.
+- **Music Only**: just the music, for karaoke. The phone downloads about half as much.
+- **Voice Only**: just the singer, for learning a song's melody or words. The phone downloads about half as much.
+
+You can switch at any time, even in the middle of a song. The helper keeps both files, so switching only
+downloads the one the phone doesn't have yet. (A song the helper has since cleared to save space is prepared
+again.)
 
 ## Pause or cancel
 
