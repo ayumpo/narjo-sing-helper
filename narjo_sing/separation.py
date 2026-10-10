@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import platform
+import re
 import shutil
 import tempfile
 from dataclasses import dataclass, field
@@ -72,12 +74,21 @@ def detect_device() -> str:
             return "mps: Apple silicon"
     except ImportError:
         pass
-    name = platform.processor() or "unknown"
     try:
-        for line in Path("/proc/cpuinfo").read_text().splitlines():
-            if line.startswith("model name"):
-                name = line.split(":", 1)[1].strip()
-                break
+        cpuinfo = Path("/proc/cpuinfo").read_text()
     except OSError:
-        pass
-    return f"cpu: {name}"
+        cpuinfo = ""
+    return f"cpu: {cpu_name(cpuinfo, platform.processor() or platform.machine(), os.cpu_count())}"
+
+
+def cpu_name(cpuinfo: str, machine: str, cores: int | None) -> str:
+    """The CPU's model name. ARM Linux (Docker on a Mac, a Raspberry Pi) reports none, so the maker or the
+    architecture stands in, with the core count; implementer 0x61 is Apple."""
+    for line in cpuinfo.splitlines():
+        if line.startswith("model name"):
+            return line.split(":", 1)[1].strip()
+    if re.search(r"^CPU implementer\s*:\s*0x61\b", cpuinfo, re.M):
+        vendor = "Apple silicon"
+    else:
+        vendor = machine or "unknown"
+    return f"{vendor}, {cores} cores" if cores and vendor != "unknown" else vendor
