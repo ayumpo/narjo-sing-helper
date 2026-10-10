@@ -9,7 +9,8 @@ and separates each song into "vocals" and "music". Your music never leaves your 
 ## What you need
 
 - A computer that is always on and can see your music folder, with **Docker**: a Synology NAS, a home
-  server (Proxmox, Unraid, Ubuntu…) or a Mac or Windows PC with Docker Desktop.
+  server (Proxmox, Unraid, Ubuntu…) or a Mac or Windows PC with Docker Desktop. Your music can stay on your
+  NAS while the helper runs on a faster Mac or PC.
 - About **10 GB of free space** (the helper itself, its voice-separation models, and prepared songs).
 - Narjo on your iPhone or iPad, on the same home network (or connected through a VPN such as Tailscale).
 
@@ -20,6 +21,7 @@ It depends entirely on the computer it runs on:
 | Your server | A new song is ready in about… |
 |---|---|
 | Modern mini PC or desktop (for example Intel Core i5-12500T) | **2–3 minutes**. Narjo prepares the next songs in your queue while you listen. |
+| Mac with an M1 chip | **About 8 minutes** for a 4-minute song, in the better version (about 3–4 minutes if you choose Fast). |
 | Low-power NAS (for example Synology DS920+, Intel Celeron J4125) | **30 minutes to an hour**. Fine for preparing songs ahead of time, too slow to tap the mic and sing right away. |
 
 Once a song is prepared, it starts in Sing within a second, every time.
@@ -48,6 +50,12 @@ line:
 > **Where is my music folder?** Use the folder your music server (Navidrome, Plex, Jellyfin or Emby) reads.
 > On Synology: File Station → right-click your music folder → **Properties** → **Location**.
 > On Unraid it is usually `/mnt/user/music`.
+> On a Mac: in Finder, right-click your music folder, hold the **Option** key, and choose **Copy "…" as
+> Pathname**. You get something like `/Users/jane/Music/Library`.
+> On Windows: open your music folder in File Explorer, click the address bar and copy it. You get something
+> like `C:\Users\Jane\Music`; change every `\` to `/`, so it reads `C:/Users/Jane/Music`.
+> If your music is on a NAS and the helper runs on a Mac or PC, see
+> [Music on a NAS, helper on a Mac or PC](#music-on-a-nas-helper-on-a-mac-or-pc).
 
 ### 3. Start it
 
@@ -87,6 +95,93 @@ docker compose up -d --build
    sed -i 's#/volume1/music:/music#/music:/music#' docker-compose.yml
    docker-compose up -d --build
    ```
+
+**Mac** (tested on a Mac with an M1 chip)
+
+The Mac must stay switched on, awake and signed in while you want songs prepared.
+
+1. Install **Docker Desktop** from [docker.com](https://www.docker.com/products/docker-desktop/) (choose
+   **Apple Silicon** or **Intel** to match your Mac: Apple menu → **About This Mac** → **Chip**). Open it once and
+   wait until it says **Engine running**.
+2. In Docker Desktop → **Settings** → **Resources**, check that **Memory** is at least **4 GB** (raise it if
+   not, then **Apply & restart**).
+3. Do steps 1 and 2 above (download, and put your music folder in `docker-compose.yml`).
+4. Open **Terminal** (in Applications → Utilities), type `cd ` (with a space), drag your `narjo-sing-helper`
+   folder into the Terminal window, and press **Return**. Then run:
+   ```bash
+   docker compose up -d --build
+   ```
+   The first time it downloads about 3 GB and takes 10–30 minutes. If your Mac asks whether Docker may use a
+   folder, or accept incoming network connections, click **Allow**.
+5. So it keeps working after a restart: Docker Desktop → **Settings** → **General** → tick **Start Docker Desktop
+   when you sign in to your computer**. The helper itself starts again with Docker.
+6. So it doesn't stop when the screen turns off: **System Settings** → **Energy** (**Energy Saver** on older
+   macOS; on a laptop: **Battery** → **Options**) → turn on **Prevent automatic sleeping when the display is
+   off** (on a laptop: **…on power adapter when the display is off**), and keep a laptop plugged in.
+7. Your Mac's address, for Narjo: **System Settings** → **Wi-Fi** (or **Network** → **Ethernet**) → **Details…**
+   next to your network → **IP address**.
+
+**Windows PC** (not yet tested)
+
+The PC must stay switched on, awake and signed in while you want songs prepared.
+
+1. Install **Docker Desktop** from [docker.com](https://www.docker.com/products/docker-desktop/). Keep the
+   **WSL 2** option ticked, and restart the PC when it asks. Open Docker Desktop once and wait until it says
+   **Engine running**.
+2. Do steps 1 and 2 above (download, and put your music folder in `docker-compose.yml`, written like
+   `C:/Users/Jane/Music`). Your music must be on this PC's own drive: a network drive with a letter (like
+   `Z:`) doesn't work here. For music on a NAS, see
+   [Music on a NAS, helper on a Mac or PC](#music-on-a-nas-helper-on-a-mac-or-pc).
+3. Open your `narjo-sing-helper` folder in File Explorer, click the address bar, type `powershell` and press
+   **Enter**. In the blue window, run:
+   ```powershell
+   docker compose up -d --build
+   ```
+   The first time it downloads about 3 GB and takes 10–30 minutes.
+4. If Windows asks whether to allow Docker on your networks, choose **Private networks** and **Allow**.
+5. So it keeps working after a restart: Docker Desktop → **Settings** → **General** → tick **Start Docker Desktop
+   when you sign in to your computer**.
+6. So it doesn't stop when the PC goes to sleep: **Settings** → **System** → **Power** (or **Power & battery**)
+   → **Screen and sleep** → set **When plugged in, put my device to sleep after** to **Never**.
+7. Your PC's address, for Narjo: **Settings** → **Network & internet** → **Wi-Fi** or **Ethernet** → your
+   network → **IPv4 address**.
+
+### Music on a NAS, helper on a Mac or PC
+
+The helper can run on a fast Mac or PC while your music stays on your NAS. There are two ways.
+
+**Docker connects to the NAS itself** (Mac and Windows; tested on a Mac, not yet on Windows)
+
+It reconnects by itself after a restart.
+
+1. On your NAS, make a user that can only **read** your music folder (Synology: **Control Panel** → **User &
+   Group** → **Create**, then give it **Read only** on the music shared folder). Its password goes into a
+   file in plain text, so don't use your main account.
+2. In `docker-compose.yml`, change the music line to:
+   ```yaml
+         - nas-music:/music:ro
+   ```
+3. At the very end of the file, add these lines, starting at the left edge, with your NAS's address, the
+   shared folder's name, and the user from step 1:
+   ```yaml
+   volumes:
+     nas-music:
+       driver_opts:
+         type: cifs
+         device: "//192.168.1.10/music"
+         o: "addr=192.168.1.10,username=narjo-sing,password=YOUR-PASSWORD,vers=3.0,ro"
+   ```
+   `192.168.1.10` appears twice: change both. If the password has a comma in it, choose another one.
+4. Start it as above. If you change these lines later, run `docker compose down -v` (it forgets only the NAS
+   connection; your prepared songs stay), then start it again.
+
+**Through Finder** (Mac only; not yet tested)
+
+1. In Finder: **Go** → **Connect to Server**, type `smb://192.168.1.10/music` (your NAS's address and shared
+   folder), and sign in.
+2. The folder appears under `/Volumes`: use `/Volumes/music` as your music folder in `docker-compose.yml`.
+3. It must be connected whenever the helper runs. To reconnect it after a restart: **System Settings** →
+   **General** → **Login Items** → **+** under **Open at Login** → choose the `music` folder.
 
 ## Connect Narjo
 
@@ -258,7 +353,17 @@ your hardware landed in.
 
 ### Docker on a Mac
 
-Docker Desktop on macOS can't use the Mac's GPU, so the helper runs on the CPU there.
+Docker on macOS runs Linux containers in a virtual machine that can't use the Mac's GPU, so the helper runs
+on the CPU there. Measured on an M1 with 6 cores and 8 GB given to Docker: HTDemucs 51 s and MelBand
+RoFormer 114 s per minute of audio, so the helper picks `single` mode; memory peaked at about 2.8 GB while
+separating. [Colima](https://github.com/abiosoft/colima) works as well as Docker Desktop
+(`colima start --vm-type vz --cpu 6 --memory 8`); it shares only your home folder with containers unless you
+add `--mount`, so keep your music folder there or mount its location.
+
+A music folder on a NAS can be mounted by Docker itself as a CIFS volume (see
+[Music on a NAS, helper on a Mac or PC](#music-on-a-nas-helper-on-a-mac-or-pc)); the mount runs inside
+Docker's virtual machine, so use the NAS's IP address for both `device` and `addr=`. Windows drive letters
+mapped in File Explorer aren't visible to Docker.
 
 ### API
 
