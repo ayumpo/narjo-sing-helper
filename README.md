@@ -21,7 +21,7 @@ It depends entirely on the computer it runs on:
 | Your server | A new song is ready in about… |
 |---|---|
 | Modern mini PC or desktop (for example Intel Core i5-12500T) | **2–3 minutes**. Narjo prepares the next songs in your queue while you listen. |
-| Mac with an M1 chip | **About 8 minutes** for a 4-minute song, in the better version (about 3–4 minutes if you choose Fast). |
+| Mac with an M1 chip | **8–10 minutes** for a 4-minute song, in the better version (about 3 minutes if you choose Fast). |
 | Low-power NAS (for example Synology DS920+, Intel Celeron J4125) | **30 minutes to an hour**. Fine for preparing songs ahead of time, too slow to tap the mic and sing right away. |
 
 Once a song is prepared, it starts in Sing within a second, every time.
@@ -96,23 +96,27 @@ docker compose up -d --build
    docker-compose up -d --build
    ```
 
-**Mac** (the helper is tested on a Mac with an M1 chip; the Docker Desktop screens below are not yet tested)
+**Mac** (tested on a Mac with an M1 chip and Docker Desktop 4.95)
 
 The Mac must stay switched on, awake and signed in while you want songs prepared.
 
 1. Install **Docker Desktop** from [docker.com](https://www.docker.com/products/docker-desktop/) (choose
    **Apple Silicon** or **Intel** to match your Mac: Apple menu → **About This Mac** → **Chip**). Open it once and
    wait until it says **Engine running**.
-2. In Docker Desktop → **Settings** → **Resources**, check that **Memory** is at least **4 GB** (raise it if
-   not, then **Apply & restart**). The helper used about 3 GB in our test.
+2. In Docker Desktop → **Settings** → **Resources**, check that **Memory** is at least **5 GB** (raise it if
+   not, then **Apply & restart**). The helper used up to 3.5 GB in our test.
 3. Do **1. Download** and **2. Tell it where your music is** above.
 4. Open **Terminal** (in Applications → Utilities), type `cd ` (with a space), drag your `narjo-sing-helper`
    folder into the Terminal window, and press **Return**. Then run:
    ```bash
    docker compose up -d --build
    ```
-   The first time it downloads about 3 GB and takes about 15 minutes on an M1. If your Mac asks whether Docker
-   may use a folder, or accept incoming network connections, click **Allow**.
+   The first time it downloads about 3 GB: a few minutes on a fast connection, up to about 15 minutes. If your
+   Mac asks whether Docker may use a folder, or accept incoming network connections, click **Allow**.
+
+   If Terminal answers `command not found: docker`, or the build stops with `docker-credential-desktop`
+   … `not found`: Docker Desktop → **Settings** → **Advanced** → choose **System (requires password)** →
+   **Apply & restart**. Then open a new Terminal window and run the command again.
 5. So it keeps working after a restart: Docker Desktop → **Settings** → **General** → tick **Start Docker Desktop
    when you sign in to your computer**. The helper itself starts again with Docker.
 6. So it doesn't stop when the screen turns off: **System Settings** → **Energy** (**Energy Saver** on older
@@ -370,11 +374,28 @@ your hardware landed in.
 ### Docker on a Mac
 
 Docker on macOS runs Linux containers in a virtual machine that can't use the Mac's GPU, so the helper runs
-on the CPU there. Measured on an M1 with 6 cores and 8 GB given to Docker: HTDemucs 51 s and MelBand
-RoFormer 114 s per minute of audio, so the helper picks `single` mode; memory peaked at about 2.8 GB while
-separating. That test ran Docker through [Colima](https://github.com/abiosoft/colima), a free alternative
-to Docker Desktop (`colima start --vm-type vz --cpu 6 --memory 8`). Colima shares only your home folder with
-containers unless you add `--mount`, so keep your music folder there or mount its location.
+on the CPU there. Two measurements on a 16 GB M1, both landing in `single` mode:
+
+| | Docker Desktop 4.95 (its defaults: 8 cores, 8 GB) | Colima (6 cores, 8 GB) |
+|---|---|---|
+| First build | 2 min 23 s | about 10 min |
+| Speed test, HTDemucs / MelBand RoFormer | 56 s / 119 s per minute of audio | 51–55 s / 109–114 s |
+| A 4:40 song, Fast / Best | 2 min 56 s / 10 min 50 s | not measured |
+| Peak memory while separating | 3.45 GB | about 2.8 GB |
+
+On a real song MelBand took 139 s per minute of audio, about 15% slower than its speed test predicted.
+Build times depend mostly on the download speed at the time.
+
+Docker Desktop has two ways to install its command-line tools (**Settings** → **Advanced**). With **User**,
+they go to `~/.docker/bin`, which isn't on the Terminal's `PATH`, so `docker` is not found; with **System
+(requires password)** they go to `/usr/local/bin` and just work. A music folder under `/private/tmp` was
+shared with the container without any change to Docker Desktop's file sharing. The folder-access and
+incoming-connection prompts did not appear in this test (music outside the protected folders, macOS firewall
+off).
+
+[Colima](https://github.com/abiosoft/colima) is a free alternative to Docker Desktop
+(`colima start --vm-type vz --cpu 6 --memory 8`). It shares only your home folder with containers unless you
+add `--mount`, so keep your music folder there or mount its location.
 
 A music folder on a NAS can be mounted by Docker itself as a CIFS volume (see
 [Music on a NAS, helper on a Mac or PC](#music-on-a-nas-helper-on-a-mac-or-pc)); the mount runs inside
