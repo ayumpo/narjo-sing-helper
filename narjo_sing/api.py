@@ -83,6 +83,9 @@ def create_app(ctx: AppContext) -> FastAPI:
         if meta is not None and copy_answers(meta.quality, quality, priority, plan, usable):
             job = ctx.store.record_done(key, file.rel_path, file.duration, priority, model, requested_quality=quality)
         else:
+            if ctx.status.music_problem:
+                # Only new work needs the music file; stems the helper already has are still handed out.
+                raise HTTPException(status_code=503, detail=ctx.status.music_problem)
             job = ctx.store.submit(key, file.rel_path, file.duration, priority, model, background=priority == "batch",
                                    requested_quality=quality)
         if quality == "both" and usable and (meta is None or meta.quality != "best"):
@@ -115,9 +118,12 @@ def create_app(ctx: AppContext) -> FastAPI:
     @app.get("/v1/health", dependencies=auth)
     def health() -> dict:
         plan = ctx.status.plan
-        state = "error" if ctx.status.error else ("benchmarking" if ctx.status.benchmarking else "ready")
+        folder = ctx.status.music_problem
+        error = ctx.status.error or folder
+        state = "error" if error else ("benchmarking" if ctx.status.benchmarking else "ready")
         return {
-            "version": ctx.version, "device": ctx.status.device, "state": state, "error": ctx.status.error,
+            "version": ctx.version, "device": ctx.status.device, "state": state, "error": error,
+            "musicFolderProblem": folder,
             "mode": plan.mode if plan else None,
             "fastModel": ctx.settings.fast_model, "bestModel": plan.best_model if plan else None,
             "fastSecondsPerMinute": seconds_per_minute(ctx.settings.fast_model),
@@ -125,6 +131,7 @@ def create_app(ctx: AppContext) -> FastAPI:
             "queueLength": ctx.store.queue_length(),
             "backgroundPrepRecommended": plan.background_prep_recommended if plan else False,
             "libraryFiles": ctx.index.count(),
+            "libraryScanning": ctx.index.scanning,
             "qualityChoices": True,
             "paused": ctx.store.paused(),
             "configuredBestModel": ctx.settings.best_model,

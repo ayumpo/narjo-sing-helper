@@ -14,6 +14,7 @@ from .benchmark import load_or_run
 from .config import Settings
 from .jobs import JobStore
 from .library.index import LibraryIndex
+from .music_folder import check_music_folder
 from .runner import SubprocessRunner, clean_work_dir
 from .separation import model_spec
 from .status import HelperStatus, ModelTiming
@@ -45,13 +46,46 @@ def apply_benchmark(ctx: AppContext, bench: dict) -> None:
     ctx.status.benchmarking = False
 
 
-def scan_loop(index: LibraryIndex, minutes: int, stop: threading.Event) -> None:
+def scan_once(index: LibraryIndex, status: HelperStatus) -> None:
+    """Scans the library unless the music folder can't be used; then the index keeps its songs."""
+    if check_music_folder(status, index.music_dir, index.count):
+        return
+    log.info("Library scan: %s", index.scan())
+
+
+MUSIC_CHECK_SECONDS = 20
+
+
+def music_watch_loop(index: LibraryIndex, status: HelperStatus, stop: threading.Event,
+                     seconds: float = MUSIC_CHECK_SECONDS) -> None:
+    """Keeps `status.music_problem` current for the API, which reads it instead of touching the folder."""
     while not stop.is_set():
         try:
-            log.info("Library scan: %s", index.scan())
+            check_music_folder(status, index.music_dir, index.count)
+        except Exception:
+            log.exception("Music folder check failed")
+        stop.wait(seconds)
+
+
+# A scan stats every file; on a slow share it can take minutes, so the pause after it grows with it (the share
+# is busy scanning at most about a sixth of the time), up to an hour so new and moved songs still show up.
+SCAN_PAUSE_FACTOR = 5
+SCAN_PAUSE_CEILING_SECONDS = 3600
+
+
+def scan_wait_seconds(minutes: int, last_scan_seconds: float) -> float:
+    return max(minutes * 60, min(SCAN_PAUSE_FACTOR * last_scan_seconds, SCAN_PAUSE_CEILING_SECONDS))
+
+
+def scan_loop(index: LibraryIndex, minutes: int, stop: threading.Event, status: HelperStatus,
+              clock=time.monotonic) -> None:
+    while not stop.is_set():
+        started = clock()
+        try:
+            scan_once(index, status)
         except Exception:
             log.exception("Library scan failed")
-        stop.wait(minutes * 60)
+        stop.wait(scan_wait_seconds(minutes, clock() - started))
 
 
 def worker_loop(ctx: AppContext, worker: Worker, runner, force_bench: bool, stop: threading.Event,
@@ -76,7 +110,9 @@ def main() -> None:
     ctx, worker = build(settings, runner)
     log.info("Access key (also saved in %s): %s", settings.stems_dir / "access-key.txt", ctx.key)
     stop = threading.Event()
-    threading.Thread(target=scan_loop, args=(ctx.index, settings.rescan_minutes, stop), daemon=True).start()
+    threading.Thread(target=music_watch_loop, args=(ctx.index, ctx.status, stop), daemon=True).start()
+    threading.Thread(target=scan_loop, args=(ctx.index, settings.rescan_minutes, stop, ctx.status),
+                     daemon=True).start()
     threading.Thread(target=worker_loop, args=(ctx, worker, runner, os.environ.get("SING_REBENCHMARK") == "1", stop),
                      daemon=True).start()
     uvicorn.run(create_app(ctx), host="0.0.0.0", port=settings.port, log_level="info")

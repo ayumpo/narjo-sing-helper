@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from datetime import datetime
@@ -10,6 +11,7 @@ from .cache import effective_budget, evict
 from .config import Settings
 from .jobs import Job, JobStore
 from .library.index import LibraryIndex
+from .music_folder import check_music_folder
 from .quality import best_usable, copy_label, queued_model, upgrade_wanted
 from .status import HelperStatus
 from .stems import song_key, write_stem_pair
@@ -40,6 +42,8 @@ class Worker:
         job = self.store.next_runnable(allow_background=within_hours(self.settings.best_hours, self._now()))
         if job is None:
             return False
+        if check_music_folder(self.status, self.settings.music_dir, self.index.count):
+            return False  # the job waits in the queue until the folder is back
         file = self.index.get(job.rel_path)
         if file is None or song_key(file.rel_path, file.size, file.mtime_ns) != job.key:
             self.store.fail(job.id, "The file changed or was removed after the request; submit the song again.")
@@ -47,6 +51,12 @@ class Worker:
         max_seconds = self.settings.max_minutes * 60
         if file.duration > max_seconds:
             self.store.fail(job.id, f"Longer than SING_MAX_MINUTES ({self.settings.max_minutes:g} min)")
+            return True
+        # os.path.isfile, not Path.is_file: it answers False for any OSError (a share's EACCES, EIO, ESTALE) instead
+        # of raising, which would leave this job first in line on every step.
+        if not os.path.isfile(self.settings.music_dir / job.rel_path):
+            self.store.fail(job.id, "This song's file is no longer in your music folder. If it moved, the helper "
+                                    "finds it at its next library scan; try again later.")
             return True
         if not self.store.mark_running(job.id):
             return True  # cancelled between being picked and starting

@@ -251,6 +251,17 @@ ready.
   Control Panel → Security → Firewall).
 - **"Song not found".** The helper can't see that song's file. Make sure the music line in the compose file
   points at the same music folder your music server uses.
+- **"The helper can't see your music folder".** The connection to the folder with your music dropped
+  (usually a NAS after the computer slept or restarted). Reconnect it, then restart the helper: Docker Desktop
+  → **Containers** → `narjo-sing-helper` → **Restart**, or `docker compose restart`. Songs already waiting stay
+  in the queue and start once the helper sees the folder again. With the music in Finder, check that
+  `/Volumes` shows the same name as before: macOS can reconnect it as `music-1`.
+- **"Songs in your library" grows slowly.** The first look at your music reads every song's details once; on a
+  NAS over the network that can take a while for a big library (the status page says "checking your music
+  folder…" meanwhile). Later checks look at every song's size and date but re-read only the songs that changed.
+  A song is forgotten only when two checks in a row don't find it, and never while its folder can't be read, so a
+  NAS that drops for a moment doesn't make the helper start over. A folder the helper can't read shows up in its
+  log as "cannot read a directory"; give the helper's user access to it, and its songs are checked again.
 - **The mic keeps spinning.** The helper is still preparing the song. Open the status page above to see its
   progress; on slower servers this takes a while.
 - **Updating.** Download the new ZIP and replace the files in your `narjo-sing-helper` folder, but keep
@@ -332,7 +343,7 @@ All variables are read once, at startup.
 | `SING_STEMS_DIR` | `/stems` | Where finished stems, the library index, the job queue and the access key are stored. |
 | `SING_PORT` | `8765` | TCP port the helper listens on. |
 | `SING_STEM_CACHE_GB` | `50` | Maximum total size of the stems cache, in GB. Least-recently-used stems are evicted first. |
-| `SING_RESCAN_MINUTES` | `10` | How often the library index is refreshed. Only files whose size or modification time changed are re-read. |
+| `SING_RESCAN_MINUTES` | `10` | Minutes between library checks, at least 1. A slow share waits longer: five times the last check, up to an hour. Only files whose size or modification time changed are re-read. |
 | `SING_FAST_MODEL` | `htdemucs` | Model used for `now`/`next` jobs: `htdemucs` or `melband_kim`. |
 | `SING_BEST_MODEL` | `melband_kim` | Model used for `batch` jobs and background upgrades. Same choices as above; set it equal to `SING_FAST_MODEL` to use one model for everything. Changing it moves already-queued jobs to the new model on the next start. |
 | `SING_BEST_UPGRADE` | `auto` | `auto` decides the tier mode from the benchmark; `on` forces two-tier background upgrades even if the benchmark alone would not enable them; `off` disables them. |
@@ -410,10 +421,14 @@ needs no key, but shows nothing sensitive until a key is entered in the browser.
 
 - `GET /v1/ping` — `{ok: true}`. No key required; used as the container health check.
 - `GET /v1/health` — helper and benchmark status:
-  `{version, device, state, error, mode, fastModel, bestModel, fastSecondsPerMinute,
-  bestSecondsPerMinute, queueLength, backgroundPrepRecommended, libraryFiles, qualityChoices, paused,
-  configuredBestModel, bestStatus}`.
+  `{version, device, state, error, musicFolderProblem, mode, fastModel, bestModel, fastSecondsPerMinute,
+  bestSecondsPerMinute, queueLength, backgroundPrepRecommended, libraryFiles, libraryScanning, qualityChoices,
+  paused, configuredBestModel, bestStatus}`. `libraryScanning` is `true` while the helper checks the music folder
+  for changes.
   `state` is `benchmarking`, `ready` or `error`; `error` is set only in the `error` state.
+  `musicFolderProblem` says why the music folder can't be used (missing, not a folder, or empty after songs
+  were found in it), as checked every 20 seconds; while it is set, `state` is `error`, a song that needs
+  preparing answers 503 with it as `detail` (songs already prepared are still handed out), and queued jobs wait.
   `mode` is `single`, `two-tier` or `fast-only` once benchmarking has finished. `qualityChoices` is `true`
   on helpers that accept `quality`. `bestStatus` is `pending`, `measured`, `tooSlow` (slower than 30× real
   time) or `unavailable` (the better model's speed test failed, for example because it couldn't be downloaded).

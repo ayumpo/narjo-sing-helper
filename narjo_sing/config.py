@@ -62,7 +62,7 @@ class Settings:
             stems_dir=Path(e.get("SING_STEMS_DIR", "/stems")),
             port=int(e.get("SING_PORT", "8765")),
             stem_cache_gb=float(e.get("SING_STEM_CACHE_GB", "50")),
-            rescan_minutes=int(e.get("SING_RESCAN_MINUTES", "10")),
+            rescan_minutes=max(1, int(e.get("SING_RESCAN_MINUTES", "10"))),
             fast_model=e.get("SING_FAST_MODEL", "htdemucs"),
             best_model=e.get("SING_BEST_MODEL", "melband_kim"),
             best_upgrade=upgrade,

@@ -88,6 +88,13 @@ def _like_escape(text: str) -> str:
 class LibraryIndex:
     def __init__(self, db_path: Path, music_dir: Path):
         self.music_dir = music_dir
+        # True while a scan walks the folder; the status page says so, because a slow share can take minutes.
+        self.scanning = False
+        # Indexed files the last scan didn't find outside folders it couldn't read. A file is dropped only when the
+        # next scan misses it too: a share that hiccups can hide songs, and re-adding them re-reads their tags.
+        self._missing_last_scan: set[str] = set()
+        # Every indexed file the last scan didn't find; matching prefers the others (a moved song's old row).
+        self._unconfirmed: frozenset[str] = frozenset()
         self._lock = threading.Lock()
         self._db = sqlite3.connect(db_path, check_same_thread=False)
         with self._lock:
@@ -102,19 +109,33 @@ class LibraryIndex:
                 yield Path(root) / name
 
     def scan(self) -> dict:
+        self.scanning = True
+        try:
+            return self._scan()
+        finally:
+            self.scanning = False
+
+    def _scan(self) -> dict:
         with self._lock:
             known = {r[0]: (r[1], r[2]) for r in self._db.execute("SELECT rel_path, size, mtime_ns FROM files")}
         seen: set[str] = set()
         added = updated = pending = 0
+        unreadable: list[str] = []  # folders the walk couldn't read, relative to the music folder ("" = all)
 
         def on_walk_error(exc: OSError) -> None:
+            unreadable.append(self._relative_folder(exc.filename))
             log.warning("Library scan: cannot read a directory: %s", exc)
 
         for path in self._walk(onerror=on_walk_error):
             try:
                 rel = path.relative_to(self.music_dir).as_posix()
-                st = path.stat()
-                seen.add(rel)
+                seen.add(rel)  # listed, so it exists even if its details can't be read right now
+                try:
+                    st = path.stat()
+                except FileNotFoundError:
+                    if path.is_symlink():
+                        seen.discard(rel)  # a link to a file that is gone
+                    raise
                 if known.get(rel) == (st.st_size, st.st_mtime_ns):
                     continue
                 try:
@@ -143,11 +164,40 @@ class LibraryIndex:
         if not seen and known:
             log.error("Music folder looks empty or unmounted; keeping %d indexed files", len(known))
             return {"added": 0, "updated": 0, "removed": 0, "total": len(known)}
-        removed = [rel for rel in known if rel not in seen]
+        missing = {rel for rel in known if rel not in seen}
+        # Songs in a folder the walk couldn't read aren't known to be gone.
+        kept = {rel for rel in missing if self._under(rel, unreadable)}
+        if kept:
+            log.warning("Library scan: %d folder(s) couldn't be read; keeping %d songs in them",
+                        len(set(unreadable)), len(kept))
+        confirmable = missing - kept
+        removed = sorted(confirmable & self._missing_last_scan)
+        self._missing_last_scan = confirmable - set(removed)
+        self._unconfirmed = frozenset(missing - set(removed))
         with self._lock:
             self._db.executemany("DELETE FROM files WHERE rel_path = ?", [(r,) for r in removed])
             self._db.commit()
         return {"added": added, "updated": updated, "removed": len(removed), "total": len(seen)}
+
+    def _relative_folder(self, filename) -> str:
+        """`filename` relative to the music folder; "" (all of it) for the folder itself or a path outside it."""
+        if not filename:
+            return ""
+        try:
+            rel = Path(filename).relative_to(self.music_dir).as_posix()
+        except ValueError:
+            return ""
+        return "" if rel == "." else rel
+
+    @staticmethod
+    def _under(rel: str, folders: list[str]) -> bool:
+        return any(folder == "" or rel == folder or rel.startswith(folder + "/") for folder in folders)
+
+    def prefer_present(self, files: list[IndexedFile]) -> list[IndexedFile]:
+        """The files the last scan found, when there are any among `files`."""
+        unconfirmed = self._unconfirmed
+        present = [f for f in files if f.rel_path not in unconfirmed]
+        return present or files
 
     def get(self, rel_path: str) -> IndexedFile | None:
         with self._lock:

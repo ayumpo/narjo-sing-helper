@@ -278,7 +278,8 @@ _PAGE = """<!doctype html>
     setText("s-mode", modeLabel(health.mode));
     setText("s-fast", fastLabel(health));
     setText("s-best", bestLabel(health));
-    setText("s-library", health.libraryFiles);
+    setText("s-library", Number(health.libraryFiles).toLocaleString()
+      + (health.libraryScanning ? " · checking your music folder…" : ""));
     setText("s-queue", health.queueLength);
     statusCard.classList.remove("hidden");
 

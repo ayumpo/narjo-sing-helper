@@ -60,3 +60,8 @@ def test_key_is_created_once_and_private(tmp_path):
     assert load_or_create_key(tmp_path) == first
     assert len(first) >= 32
     assert (tmp_path / "access-key.txt").stat().st_mode & 0o777 == 0o600
+
+
+def test_rescan_minutes_is_at_least_one():
+    from narjo_sing.config import Settings
+    assert Settings.from_env({"SING_RESCAN_MINUTES": "0"}).rescan_minutes == 1

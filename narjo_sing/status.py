@@ -19,6 +19,9 @@ class HelperStatus:
     timings: dict[str, ModelTiming] = field(default_factory=dict)
     benchmarking: bool = True
     error: str | None = None
+    # Why the music folder couldn't be used at the last check (music_folder.py); the API answers with it and never
+    # touches the folder itself, which can block on a dropped network share.
+    music_problem: str | None = None
 
     def expected_seconds(self, model: str, duration: float) -> float:
         timing = self.timings.get(model)

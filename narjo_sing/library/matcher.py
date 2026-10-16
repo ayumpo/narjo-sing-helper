@@ -32,7 +32,7 @@ def match(index: LibraryIndex, query: SongQuery) -> MatchResult:
         searched.append("path")
         parts = [p for p in query.path.replace("\\", "/").split("/") if p]
         for k in range(len(parts), 0, -1):
-            hits = index.by_suffix("/".join(parts[-k:]))
+            hits = index.prefer_present(index.by_suffix("/".join(parts[-k:])))
             if not hits:
                 continue
             only = hits[0]
@@ -43,8 +43,8 @@ def match(index: LibraryIndex, query: SongQuery) -> MatchResult:
     title, album, artist = norm(query.title), norm(query.album), norm(query.album_artist)
     if title and album:
         for require_artist in ((True, False) if artist else (False,)):
-            hits = index.by_tags(artist, album, title, query.disc, query.track, query.duration,
-                                 tolerance=DURATION_TOLERANCE, require_artist=require_artist)
+            hits = index.prefer_present(index.by_tags(artist, album, title, query.disc, query.track, query.duration,
+                                                      tolerance=DURATION_TOLERANCE, require_artist=require_artist))
             if hits:
                 return MatchResult(hits[0], "tags", tuple(searched))
     return MatchResult(None, None, tuple(searched))
